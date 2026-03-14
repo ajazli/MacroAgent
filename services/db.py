@@ -18,13 +18,26 @@ _pool: Optional[asyncpg.Pool] = None
 
 
 async def init_pool() -> None:
-    """Initialize the shared asyncpg connection pool and run migrations."""
+    """Initialize the shared asyncpg connection pool and run migrations.
+    Idempotent — safe to call multiple times; skips if already initialised."""
     global _pool
-    database_url = os.environ["DATABASE_URL"]
-    async def _init_conn(conn):
-        await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+    if _pool is not None:
+        logger.debug("init_pool called but pool already exists — skipping.")
+        return
 
+    database_url = os.environ["DATABASE_URL"]
+
+    async def _init_conn(conn):
+        await conn.set_type_codec(
+            "jsonb",
+            encoder=json.dumps,
+            decoder=json.loads,
+            schema="pg_catalog",
+        )
+
+    logger.info("Creating asyncpg connection pool…")
     _pool = await asyncpg.create_pool(database_url, min_size=2, max_size=10, init=_init_conn)
+    logger.info("Connection pool created — running migrations…")
     await _run_migrations()
     logger.info("Database pool initialised.")
 

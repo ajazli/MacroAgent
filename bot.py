@@ -91,26 +91,34 @@ async def _run_polling_with_api(app: Application) -> None:
     """Run the bot in polling mode alongside the aiohttp API server."""
     from aiohttp import web
     from handlers.api import build_api_app
+    from services.db import init_pool, close_pool
+
+    # Initialise DB pool BEFORE starting the Application context so
+    # the pool is guaranteed to exist when the first update arrives.
+    await init_pool()
 
     api_app = build_api_app(app.bot)
     port = int(os.environ.get("PORT", 8080))
 
-    async with app:
-        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-        await app.start()
+    try:
+        async with app:
+            await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+            await app.start()
 
-        runner = web.AppRunner(api_app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", port)
-        await site.start()
-        logger.info("API server listening on port %d", port)
+            runner = web.AppRunner(api_app)
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+            logger.info("API server listening on port %d", port)
 
-        try:
-            await asyncio.Event().wait()
-        finally:
-            await runner.cleanup()
-            await app.updater.stop()
-            await app.stop()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await runner.cleanup()
+                await app.updater.stop()
+                await app.stop()
+    finally:
+        await close_pool()
 
 
 def main() -> None:
