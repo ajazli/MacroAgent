@@ -109,7 +109,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             return
 
         today = date.today()
-        start = today - timedelta(days=6)
+        start = today - timedelta(days=27)  # 28 days for 4-week exercise section
 
         parts = []
         for u in users:

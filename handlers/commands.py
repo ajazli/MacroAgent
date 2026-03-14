@@ -39,13 +39,20 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     name = formatter.escape(user["name"])
     msg = (
         f"👋 Hey *{name}*\\! Welcome to *Jazli's Macro Agent* 🏋️\n\n"
-        "I'll help you track your meals, workouts, weight, steps, and water intake\\.\n\n"
-        "*Commands:*\n"
-        "`/log weight 74\\.2` — log your weight\n"
+        "I'll help you track meals, workouts, weight, steps, and water\\.\n\n"
+        "*Nutrition & basics:*\n"
+        "`/log weight 74\\.2` — log weight\n"
         "`/log steps 8500` — log steps\n"
         "`/log water 500` — log water \\(ml\\)\n"
-        "`/log workout chest day 45min` — log a workout\n"
-        "`/today` — see your summary for today\n\n"
+        "`/log workout chest day 45min` — free\\-form workout note\n"
+        "`/today` — today's summary\n\n"
+        "*Tracked exercises:*\n"
+        "`/pushups` — log push\\-ups \\(reps × sets\\)\n"
+        "`/situps` — log sit\\-ups \\(reps × sets\\)\n"
+        "`/planks` — log planks \\(reps × sets\\)\n"
+        "`/run` — log a run \\(distance → timing\\)\n"
+        "`/jog` — log a jog \\(distance → timing\\)\n"
+        "`/cancel` — cancel a pending exercise entry\n\n"
         "📸 Send any photo and I'll analyse it as a meal\\!"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
@@ -192,7 +199,8 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         user = await _ensure_registered(update)
         logs = await db.get_logs_for_user_today(user["id"])
-        reply = formatter.format_today_summary(user["name"], logs)
+        prev_weight = await db.get_last_weight_before_today(user["id"])
+        reply = formatter.format_today_summary(user["name"], logs, prev_weight_kg=prev_weight)
         await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception:
         logger.exception("Error in cmd_today for telegram_id=%s", update.effective_user.id)

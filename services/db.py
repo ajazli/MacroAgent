@@ -216,6 +216,29 @@ async def get_all_users_logs_today() -> list[dict]:
         raise
 
 
+async def get_last_weight_before_today(user_id: int) -> "Optional[float]":
+    """Return the most recent weight (kg) logged before today, or None."""
+    pool = get_pool()
+    today = date.today()
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT data FROM logs "
+                "WHERE user_id = $1 AND type = 'weight' AND date < $2 "
+                "ORDER BY date DESC, created_at DESC LIMIT 1",
+                user_id, today,
+            )
+            if row is None:
+                return None
+            data = row["data"]
+            if isinstance(data, str):
+                data = json.loads(data)
+            return data.get("kg") if isinstance(data, dict) else None
+    except Exception:
+        logger.exception("get_last_weight_before_today failed for user_id=%s", user_id)
+        return None
+
+
 async def get_all_users_logs_date_range(start: date, end: date) -> list[dict]:
     """Return all logs for all users in date range joined with user info."""
     pool = get_pool()

@@ -61,6 +61,7 @@ def build_application() -> Application:
     from handlers.commands import cmd_start, cmd_log, cmd_today, cmd_health
     from handlers.photo import handle_photo
     from handlers.instructor import cmd_stats, cmd_report, cmd_week, cmd_meals
+    from handlers.fitness import build_fitness_conversation
 
     # -----------------------------------------------------------------------
     # Register command handlers
@@ -75,6 +76,10 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("meals", cmd_meals))
+
+    # Fitness exercise conversation (/pushups, /situps, /planks, /run, /jog)
+    # Must be registered before the photo handler
+    app.add_handler(build_fitness_conversation())
 
     # Photo handler — catches all photos in private chats and groups
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
