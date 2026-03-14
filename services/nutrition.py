@@ -37,7 +37,7 @@ async def analyse_meal_photo(image_bytes: bytes, media_type: str = "image/jpeg")
         )
     except Exception as exc:
         logger.error("Gemini API error during meal analysis: %s", exc)
-        return None
+        return {"_debug_error": str(exc)}
 
     raw_text = response.text.strip()
 
