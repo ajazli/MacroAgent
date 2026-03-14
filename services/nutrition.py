@@ -22,7 +22,7 @@ PROMPT = (
     'If you cannot identify food, return { "error": "Could not identify food in image" }.'
 )
 
-MODEL = "gemini-1.5-flash"
+MODEL = "gemini-2.0-flash"
 
 
 async def analyse_meal_photo(image_bytes: bytes, media_type: str = "image/jpeg") -> Optional[dict]:
