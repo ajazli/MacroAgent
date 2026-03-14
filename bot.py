@@ -90,7 +90,7 @@ def main() -> None:
         # Webhook mode (Railway / production)
         # ----------------------------------------------------------------
         port = int(os.environ.get("PORT", 8443))
-        webhook_path = f"/webhook/{os.environ['TELEGRAM_BOT_TOKEN']}"
+        webhook_path = "/webhook"
         full_webhook_url = f"{webhook_url}{webhook_path}"
 
         logger.info("Starting in WEBHOOK mode: %s (port %d)", full_webhook_url, port)
