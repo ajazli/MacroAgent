@@ -312,9 +312,11 @@ def format_today_summary(
     pb = t["personal_bests"]
     pb_lines = []
     if pb["pushup"] is not None:
-        pb_lines.append(f"💪 {escape(f'Max push-ups: {pb[\"pushup\"]} reps')}")
+        pu_reps = pb["pushup"]
+        pb_lines.append(f"💪 {escape(f'Max push-ups: {pu_reps} reps')}")
     if pb["situp"] is not None:
-        pb_lines.append(f"🔥 {escape(f'Max sit-ups: {pb[\"situp\"]} reps')}")
+        su_reps = pb["situp"]
+        pb_lines.append(f"🔥 {escape(f'Max sit-ups: {su_reps} reps')}")
     if pb["2_4km"] is not None:
         timing_disp = pb["2_4km_str"] or _seconds_to_mmss(pb["2_4km"])
         pb_lines.append(f"🏃 {escape(f'2.4km PB: {timing_disp}')}")
