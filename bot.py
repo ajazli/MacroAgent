@@ -6,6 +6,7 @@ Registers all handlers and starts the bot in:
   - Webhook mode  (Railway deployment — WEBHOOK_URL is set)
 """
 
+import asyncio
 import logging
 import os
 
@@ -81,6 +82,32 @@ def build_application() -> Application:
     return app
 
 
+async def _run_polling_with_api(app: Application) -> None:
+    """Run the bot in polling mode alongside the aiohttp API server."""
+    from aiohttp import web
+    from handlers.api import build_api_app
+
+    api_app = build_api_app(app.bot)
+    port = int(os.environ.get("PORT", 8080))
+
+    async with app:
+        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        await app.start()
+
+        runner = web.AppRunner(api_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logger.info("API server listening on port %d", port)
+
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await runner.cleanup()
+            await app.updater.stop()
+            await app.stop()
+
+
 def main() -> None:
     app = build_application()
     webhook_url = os.environ.get("WEBHOOK_URL", "").strip()
@@ -103,10 +130,10 @@ def main() -> None:
         )
     else:
         # ----------------------------------------------------------------
-        # Polling mode (local development)
+        # Polling mode — runs bot + HTTP API server on PORT
         # ----------------------------------------------------------------
-        logger.info("Starting in POLLING mode.")
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        logger.info("Starting in POLLING mode with API server.")
+        asyncio.run(_run_polling_with_api(app))
 
 
 if __name__ == "__main__":
