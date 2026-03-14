@@ -220,7 +220,8 @@ def format_log_confirmation(log_type: str, data: dict) -> str:
     if log_type == "weight":
         return f"✅ Weight logged: *{escape(str(data['kg']))} kg*"
     elif log_type == "steps":
-        return f"✅ Steps logged: *{escape(f\"{data['count']:,}\")}*"
+        steps_str = f"{data['count']:,}"
+        return f"✅ Steps logged: *{escape(steps_str)}*"
     elif log_type == "water":
         return f"✅ Water logged: *{escape(str(data['ml']))} ml*"
     elif log_type == "workout":
