@@ -63,7 +63,6 @@ async def _resolve_target(args: list[str]) -> tuple[list[dict], str | None]:
 # /stats — today's totals (one user or all)
 # ---------------------------------------------------------------------------
 
-@_guard
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         users, err = await _resolve_target(context.args or [])
@@ -96,7 +95,6 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # /report / /week — 7-day summary (one user or all)
 # ---------------------------------------------------------------------------
 
-@_guard
 async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         users, err = await _resolve_target(context.args or [])
@@ -139,7 +137,6 @@ cmd_week = cmd_report
 # /meals — today's meal entries for a user
 # ---------------------------------------------------------------------------
 
-@_guard
 async def cmd_meals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         users, err = await _resolve_target(context.args or [])
