@@ -24,10 +24,10 @@ from services import db, formatter
 logger = logging.getLogger(__name__)
 
 # Conversation states
-REPS, SETS, DISTANCE, TIMING = range(4)
+REPS, SETS, DISTANCE, TIMING, PB_REPS, PB_TIMING = range(6)
 
-_KEY_TYPE = "fitness_type"
-_KEY_REPS = "fitness_reps"
+_KEY_TYPE     = "fitness_type"
+_KEY_REPS     = "fitness_reps"
 _KEY_DISTANCE = "fitness_distance"
 
 _STATIC_LABELS = {
@@ -228,6 +228,94 @@ async def received_timing(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 # ---------------------------------------------------------------------------
+# Entry points — personal bests
+# ---------------------------------------------------------------------------
+
+async def cmd_maxpushups(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data[_KEY_TYPE] = "pb_pushup"
+    await update.message.reply_text(
+        formatter.escape("🏆 Max push-ups — how many reps in one set?"),
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return PB_REPS
+
+
+async def cmd_maxsitups(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data[_KEY_TYPE] = "pb_situp"
+    await update.message.reply_text(
+        formatter.escape("🏆 Max sit-ups — how many reps in one minute?"),
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return PB_REPS
+
+
+async def cmd_pb24(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data[_KEY_TYPE] = "pb_2_4km"
+    await update.message.reply_text(
+        formatter.escape("🏆 2.4km personal best — what was your timing? (mm:ss, e.g. 12:30)"),
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return PB_TIMING
+
+
+# ---------------------------------------------------------------------------
+# State: PB_REPS
+# ---------------------------------------------------------------------------
+
+async def received_pb_reps(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        reps = int(float(update.message.text.strip()))
+        if reps <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            formatter.escape("⚠️ Please enter a valid number of reps (e.g. 35)."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return PB_REPS
+
+    user = await _ensure_registered(update)
+    ex_type = context.user_data.pop(_KEY_TYPE, "pb_pushup")
+
+    data = {"max_reps": reps}
+    await db.insert_log(user["id"], ex_type, data)
+
+    label = "Push-ups" if ex_type == "pb_pushup" else "Sit-ups"
+    await update.message.reply_text(
+        formatter.escape(f"✅ {label} PB logged: {reps} reps"),
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return ConversationHandler.END
+
+
+# ---------------------------------------------------------------------------
+# State: PB_TIMING
+# ---------------------------------------------------------------------------
+
+async def received_pb_timing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        total_seconds, timing_str = _parse_timing(update.message.text)
+    except (ValueError, IndexError):
+        await update.message.reply_text(
+            formatter.escape("⚠️ Please enter timing as mm:ss (e.g. 12:30)."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return PB_TIMING
+
+    user = await _ensure_registered(update)
+    context.user_data.pop(_KEY_TYPE, None)
+
+    data = {"timing_seconds": total_seconds, "timing_str": timing_str, "distance_km": 2.4}
+    await db.insert_log(user["id"], "pb_2_4km", data)
+
+    await update.message.reply_text(
+        formatter.escape(f"✅ 2.4km PB logged: {timing_str}"),
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return ConversationHandler.END
+
+
+# ---------------------------------------------------------------------------
 # Cancel
 # ---------------------------------------------------------------------------
 
@@ -248,17 +336,22 @@ def build_fitness_conversation() -> ConversationHandler:
     """Build the ConversationHandler for all fitness exercise commands."""
     return ConversationHandler(
         entry_points=[
-            CommandHandler("pushups", cmd_pushups),
-            CommandHandler("situps",  cmd_situps),
-            CommandHandler("planks",  cmd_planks),
-            CommandHandler("run",     cmd_run),
-            CommandHandler("jog",     cmd_jog),
+            CommandHandler("pushups",     cmd_pushups),
+            CommandHandler("situps",      cmd_situps),
+            CommandHandler("planks",      cmd_planks),
+            CommandHandler("run",         cmd_run),
+            CommandHandler("jog",         cmd_jog),
+            CommandHandler("maxpushups",  cmd_maxpushups),
+            CommandHandler("maxsitups",   cmd_maxsitups),
+            CommandHandler("pb24",        cmd_pb24),
         ],
         states={
             REPS:     [MessageHandler(filters.TEXT & ~filters.COMMAND, received_reps)],
             SETS:     [MessageHandler(filters.TEXT & ~filters.COMMAND, received_sets)],
             DISTANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_distance)],
             TIMING:   [MessageHandler(filters.TEXT & ~filters.COMMAND, received_timing)],
+            PB_REPS:  [MessageHandler(filters.TEXT & ~filters.COMMAND, received_pb_reps)],
+            PB_TIMING:[MessageHandler(filters.TEXT & ~filters.COMMAND, received_pb_timing)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         per_user=True,

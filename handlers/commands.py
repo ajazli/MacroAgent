@@ -53,6 +53,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "`/run` — log a run \\(distance → timing\\)\n"
         "`/jog` — log a jog \\(distance → timing\\)\n"
         "`/cancel` — cancel a pending exercise entry\n\n"
+        "*Personal bests:*\n"
+        "`/maxpushups` — log max push\\-up reps in one set\n"
+        "`/maxsitups` — log max sit\\-up reps in one minute\n"
+        "`/pb24` — log your 2\\.4km best timing\n\n"
         "📸 Send any photo and I'll analyse it as a meal\\!"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)

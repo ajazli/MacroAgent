@@ -56,14 +56,20 @@ def get_pool() -> asyncpg.Pool:
 
 
 async def _run_migrations() -> None:
-    """Apply the init SQL migration if tables don't exist yet."""
-    migrations_path = os.path.join(os.path.dirname(__file__), "..", "migrations", "001_init.sql")
-    migrations_path = os.path.normpath(migrations_path)
-    with open(migrations_path, "r") as f:
-        sql = f.read()
+    """Apply all SQL migrations in order."""
+    migrations_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "migrations"))
+    migration_files = sorted(
+        f for f in os.listdir(migrations_dir)
+        if f.endswith(".sql") and not f.startswith(".")
+    )
     async with get_pool().acquire() as conn:
-        await conn.execute(sql)
-    logger.info("Migrations applied.")
+        for filename in migration_files:
+            path = os.path.join(migrations_dir, filename)
+            with open(path, "r") as f:
+                sql = f.read()
+            await conn.execute(sql)
+            logger.info("Applied migration: %s", filename)
+    logger.info("All migrations applied.")
 
 
 # ---------------------------------------------------------------------------

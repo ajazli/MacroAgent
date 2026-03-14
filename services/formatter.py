@@ -59,6 +59,12 @@ def _aggregate_today(logs: list) -> dict:
             "run":    [],  # [{distance_km, timing_seconds, timing_str}]
             "jog":    [],
         },
+        "personal_bests": {
+            "pushup": None,   # max_reps (int)
+            "situp":  None,   # max_reps (int)
+            "2_4km":  None,   # timing_seconds (int)
+            "2_4km_str": None,
+        },
     }
     for row in logs:
         raw = row["data"]
@@ -89,6 +95,13 @@ def _aggregate_today(logs: list) -> dict:
             ex_name = t.replace("exercise_", "")
             if ex_name in totals["exercises"]:
                 totals["exercises"][ex_name].append(data)
+        elif t == "pb_pushup":
+            totals["personal_bests"]["pushup"] = data.get("max_reps")
+        elif t == "pb_situp":
+            totals["personal_bests"]["situp"] = data.get("max_reps")
+        elif t == "pb_2_4km":
+            totals["personal_bests"]["2_4km"] = data.get("timing_seconds")
+            totals["personal_bests"]["2_4km_str"] = data.get("timing_str")
     return totals
 
 
@@ -104,6 +117,7 @@ def _aggregate_exercise_weeks(logs: list, num_weeks: int = 4) -> list:
         week_end   = today - timedelta(days=w * 7)
         week_start = week_end - timedelta(days=6)
         pushups, situps, planks, runs = [], [], [], []
+        pb_pushup, pb_situp, pb_24km = [], [], []
 
         for row in logs:
             row_date = row["date"]
@@ -128,6 +142,12 @@ def _aggregate_exercise_weeks(logs: list, num_weeks: int = 4) -> list:
                 planks.append(data)
             elif t in ("exercise_run", "exercise_jog"):
                 runs.append(data)
+            elif t == "pb_pushup":
+                pb_pushup.append(data)
+            elif t == "pb_situp":
+                pb_situp.append(data)
+            elif t == "pb_2_4km":
+                pb_24km.append(data)
 
         weeks.append({
             "week_start": week_start,
@@ -136,50 +156,81 @@ def _aggregate_exercise_weeks(logs: list, num_weeks: int = 4) -> list:
             "situps":     situps,
             "planks":     planks,
             "runs":       runs,
+            "pb_pushup":  pb_pushup,
+            "pb_situp":   pb_situp,
+            "pb_24km":    pb_24km,
         })
     return weeks
 
 
 def _format_exercise_weeks_lines(weeks: list) -> list:
-    """Return MarkdownV2 lines for the 4-week exercise section, or [] if no data."""
-    has_data = any(w["pushups"] or w["situps"] or w["planks"] or w["runs"] for w in weeks)
-    if not has_data:
+    """Return MarkdownV2 lines for the 4-week exercise + PB section, or [] if no data."""
+    has_exercise = any(w["pushups"] or w["situps"] or w["planks"] or w["runs"] for w in weeks)
+    has_pb = any(w["pb_pushup"] or w["pb_situp"] or w["pb_24km"] for w in weeks)
+    if not has_exercise and not has_pb:
         return []
 
-    lines = [
-        "",
-        escape("━━━━━━━━━━━━━━━"),
-        "🏋️ *Exercise Progress \\(4 weeks\\)*",
-        "",
-        escape("Week          | Push-ups   | Sit-ups    | Best Run"),
-        escape("--------------|------------|------------|----------"),
-    ]
+    lines = []
 
-    for w in weeks:
-        label = f"{w['week_start'].strftime('%d %b')}-{w['week_end'].strftime('%d %b')}"
+    # ---- Weekly exercise averages ----
+    if has_exercise:
+        lines += [
+            "",
+            escape("━━━━━━━━━━━━━━━"),
+            "🏋️ *Exercise Progress \\(4 weeks\\)*",
+            "",
+            escape("Week          | Push-ups   | Sit-ups    | Best Run"),
+            escape("--------------|------------|------------|----------"),
+        ]
+        for w in weeks:
+            label = f"{w['week_start'].strftime('%d %b')}-{w['week_end'].strftime('%d %b')}"
 
-        if w["pushups"]:
-            avg_r = round(sum(s.get("reps", 0) for s in w["pushups"]) / len(w["pushups"]))
-            avg_s = round(sum(s.get("sets", 0) for s in w["pushups"]) / len(w["pushups"]))
-            pu_str = f"{avg_r}r x{avg_s}s"
-        else:
-            pu_str = "-"
+            if w["pushups"]:
+                avg_r = round(sum(s.get("reps", 0) for s in w["pushups"]) / len(w["pushups"]))
+                avg_s = round(sum(s.get("sets", 0) for s in w["pushups"]) / len(w["pushups"]))
+                pu_str = f"{avg_r}r x{avg_s}s"
+            else:
+                pu_str = "-"
 
-        if w["situps"]:
-            avg_r = round(sum(s.get("reps", 0) for s in w["situps"]) / len(w["situps"]))
-            avg_s = round(sum(s.get("sets", 0) for s in w["situps"]) / len(w["situps"]))
-            su_str = f"{avg_r}r x{avg_s}s"
-        else:
-            su_str = "-"
+            if w["situps"]:
+                avg_r = round(sum(s.get("reps", 0) for s in w["situps"]) / len(w["situps"]))
+                avg_s = round(sum(s.get("sets", 0) for s in w["situps"]) / len(w["situps"]))
+                su_str = f"{avg_r}r x{avg_s}s"
+            else:
+                su_str = "-"
 
-        if w["runs"]:
-            best_sec = min(s.get("timing_seconds", 99999) for s in w["runs"])
-            run_str = _seconds_to_mmss(best_sec)
-        else:
-            run_str = "-"
+            if w["runs"]:
+                best_sec = min(s.get("timing_seconds", 99999) for s in w["runs"])
+                run_str = _seconds_to_mmss(best_sec)
+            else:
+                run_str = "-"
 
-        row_str = f"{label:<14} | {pu_str:<10} | {su_str:<10} | {run_str}"
-        lines.append(escape(row_str))
+            row_str = f"{label:<14} | {pu_str:<10} | {su_str:<10} | {run_str}"
+            lines.append(escape(row_str))
+
+    # ---- Personal bests per week ----
+    if has_pb:
+        lines += [
+            "",
+            escape("━━━━━━━━━━━━━━━"),
+            "🏆 *Personal Bests \\(4 weeks\\)*",
+            "",
+            escape("Week          | Max Push-ups | Max Sit-ups | 2.4km PB"),
+            escape("--------------|--------------|-------------|----------"),
+        ]
+        for w in weeks:
+            label = f"{w['week_start'].strftime('%d %b')}-{w['week_end'].strftime('%d %b')}"
+
+            pu_pb = max((d.get("max_reps", 0) for d in w["pb_pushup"]), default=None)
+            su_pb = max((d.get("max_reps", 0) for d in w["pb_situp"]), default=None)
+            run_pb = min((d.get("timing_seconds", 99999) for d in w["pb_24km"]), default=None)
+
+            pu_str  = f"{pu_pb} reps" if pu_pb is not None else "-"
+            su_str  = f"{su_pb} reps" if su_pb is not None else "-"
+            run_str = _seconds_to_mmss(run_pb) if run_pb is not None else "-"
+
+            row_str = f"{label:<14} | {pu_str:<12} | {su_str:<11} | {run_str}"
+            lines.append(escape(row_str))
 
     return lines
 
@@ -256,6 +307,21 @@ def format_today_summary(
     if exercise_lines:
         lines.append(escape("━━━━━━━━━━━━━━━"))
         lines.extend(exercise_lines)
+
+    # Personal bests logged today
+    pb = t["personal_bests"]
+    pb_lines = []
+    if pb["pushup"] is not None:
+        pb_lines.append(f"💪 {escape(f'Max push-ups: {pb[\"pushup\"]} reps')}")
+    if pb["situp"] is not None:
+        pb_lines.append(f"🔥 {escape(f'Max sit-ups: {pb[\"situp\"]} reps')}")
+    if pb["2_4km"] is not None:
+        timing_disp = pb["2_4km_str"] or _seconds_to_mmss(pb["2_4km"])
+        pb_lines.append(f"🏃 {escape(f'2.4km PB: {timing_disp}')}")
+    if pb_lines:
+        lines.append(escape("━━━━━━━━━━━━━━━"))
+        lines.append("🏆 *Personal Bests \\(today\\)*")
+        lines.extend(pb_lines)
 
     return "\n".join(lines)
 
@@ -438,4 +504,11 @@ def format_log_confirmation(log_type: str, data: dict) -> str:
         dist   = escape(str(data.get("distance_km", 0)))
         timing = escape(data.get("timing_str", "?"))
         return f"✅ {label} logged: *{dist}km in {timing}*"
+    elif log_type == "pb_pushup":
+        return f"🏆 Push\\-up PB logged: *{escape(str(data.get('max_reps', 0)))} reps*"
+    elif log_type == "pb_situp":
+        return f"🏆 Sit\\-up PB logged: *{escape(str(data.get('max_reps', 0)))} reps*"
+    elif log_type == "pb_2_4km":
+        timing = escape(data.get("timing_str", "?"))
+        return f"🏆 2\\.4km PB logged: *{timing}*"
     return "✅ Logged\\."
