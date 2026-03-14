@@ -1,78 +1,46 @@
 """
-Nutrition analysis service using Claude vision API.
-Sends meal photos to Claude claude-sonnet-4-20250514 and parses the structured JSON response.
+Nutrition analysis service using Google Gemini vision API.
 """
 
-import base64
+import io
 import json
 import logging
 import os
 from typing import Optional
 
-import anthropic
+import google.generativeai as genai
+import PIL.Image
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = (
-    "You are a nutrition analysis assistant. The user has sent a photo of their meal. "
-    "Analyze the image and return ONLY a valid JSON object with no extra text, markdown, or explanation. "
-    'Schema: { description: string, calories: number, protein_g: number, carbs_g: number, fat_g: number, '
-    'fiber_g: number, confidence: \'low\'|\'medium\'|\'high\', notes: string }. '
+PROMPT = (
+    "You are a nutrition analysis assistant. Analyze this meal photo and return ONLY a valid JSON object "
+    "with no extra text, markdown, or explanation. "
+    'Schema: { "description": string, "calories": number, "protein_g": number, "carbs_g": number, '
+    '"fat_g": number, "fiber_g": number, "confidence": "low"|"medium"|"high", "notes": string }. '
     "Estimate conservatively for home-cooked portions. "
-    "If you cannot identify food, return { error: 'Could not identify food in image' }."
+    'If you cannot identify food, return { "error": "Could not identify food in image" }.'
 )
 
-MODEL = "claude-sonnet-4-6"
-
-
-def _get_client() -> anthropic.AsyncAnthropic:
-    return anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+MODEL = "gemini-1.5-flash"
 
 
 async def analyse_meal_photo(image_bytes: bytes, media_type: str = "image/jpeg") -> Optional[dict]:
-    """
-    Send image bytes to Claude vision and return parsed nutrition dict.
-
-    Returns:
-        dict with nutrition keys on success.
-        dict with 'error' key if Claude couldn't identify food.
-        None if the API call or JSON parsing fails entirely.
-    """
-    client = _get_client()
-    image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+    model = genai.GenerativeModel(MODEL)
 
     try:
-        response = await client.messages.create(
-            model=MODEL,
-            max_tokens=512,
-            system=SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": image_b64,
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": "Please analyse this meal photo and return the nutrition JSON.",
-                        },
-                    ],
-                }
-            ],
+        img = PIL.Image.open(io.BytesIO(image_bytes))
+        response = await model.generate_content_async(
+            [PROMPT, img],
+            generation_config=genai.GenerationConfig(max_output_tokens=512),
         )
     except Exception as exc:
-        logger.error("Claude API error during meal analysis: %s", exc)
-        return {"_debug_error": str(exc)}
+        logger.error("Gemini API error during meal analysis: %s", exc)
+        return None
 
-    raw_text = response.content[0].text.strip()
+    raw_text = response.text.strip()
 
-    # Strip markdown code fences if Claude wraps the JSON
     if raw_text.startswith("```"):
         lines = raw_text.splitlines()
         raw_text = "\n".join(
@@ -82,17 +50,13 @@ async def analyse_meal_photo(image_bytes: bytes, media_type: str = "image/jpeg")
     try:
         data = json.loads(raw_text)
     except json.JSONDecodeError:
-        logger.error("Claude returned non-JSON for meal analysis: %r", raw_text)
+        logger.error("Gemini returned non-JSON for meal analysis: %r", raw_text)
         return None
 
     return data
 
 
 def normalise_nutrition(raw: dict) -> dict:
-    """
-    Normalise the Claude response into the DB 'meal' data shape.
-    Handles both protein_g / carbs_g / fat_g / fiber_g naming.
-    """
     return {
         "description": raw.get("description", "Unknown meal"),
         "calories": int(raw.get("calories", 0)),
