@@ -92,6 +92,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await processing_msg.edit_text(ANALYSIS_ERROR_MSG, parse_mode=ParseMode.MARKDOWN_V2)
         return
 
+    # Debug: surface API errors temporarily
+    if "_debug_error" in raw_result:
+        from services.formatter import escape
+        await processing_msg.edit_text(
+            escape(f"⚠️ API Error: {raw_result['_debug_error']}"),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
     # Claude indicated it couldn't identify food
     if "error" in raw_result:
         await processing_msg.edit_text(ANALYSIS_ERROR_MSG, parse_mode=ParseMode.MARKDOWN_V2)

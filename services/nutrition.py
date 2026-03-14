@@ -66,9 +66,9 @@ async def analyse_meal_photo(image_bytes: bytes, media_type: str = "image/jpeg")
                 }
             ],
         )
-    except anthropic.APIError as exc:
+    except Exception as exc:
         logger.error("Claude API error during meal analysis: %s", exc)
-        return None
+        return {"_debug_error": str(exc)}
 
     raw_text = response.content[0].text.strip()
 
