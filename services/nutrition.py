@@ -1,45 +1,67 @@
 """
-Nutrition analysis service using Google Gemini vision API.
+Nutrition analysis service using Claude vision API.
 """
 
-import io
+import base64
 import json
 import logging
 import os
 from typing import Optional
 
-import google.generativeai as genai
-import PIL.Image
+import anthropic
 
 logger = logging.getLogger(__name__)
 
-PROMPT = (
-    "You are a nutrition analysis assistant. Analyze this meal photo and return ONLY a valid JSON object "
-    "with no extra text, markdown, or explanation. "
+SYSTEM_PROMPT = (
+    "You are a nutrition analysis assistant. The user has sent a photo of their meal. "
+    "Analyze the image and return ONLY a valid JSON object with no extra text, markdown, or explanation. "
     'Schema: { "description": string, "calories": number, "protein_g": number, "carbs_g": number, '
     '"fat_g": number, "fiber_g": number, "confidence": "low"|"medium"|"high", "notes": string }. '
     "Estimate conservatively for home-cooked portions. "
     'If you cannot identify food, return { "error": "Could not identify food in image" }.'
 )
 
-MODEL = "gemini-2.0-flash"
+MODEL = "claude-sonnet-4-6"
+
+
+def _get_client() -> anthropic.AsyncAnthropic:
+    return anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 
 async def analyse_meal_photo(image_bytes: bytes, media_type: str = "image/jpeg") -> Optional[dict]:
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = genai.GenerativeModel(MODEL)
+    client = _get_client()
+    image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
 
     try:
-        img = PIL.Image.open(io.BytesIO(image_bytes))
-        response = await model.generate_content_async(
-            [PROMPT, img],
-            generation_config=genai.GenerationConfig(max_output_tokens=512),
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=512,
+            system=SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": image_b64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "Please analyse this meal photo and return the nutrition JSON.",
+                        },
+                    ],
+                }
+            ],
         )
-    except Exception as exc:
-        logger.error("Gemini API error during meal analysis: %s", exc)
-        return {"_debug_error": str(exc)}
+    except anthropic.APIError as exc:
+        logger.error("Claude API error during meal analysis: %s", exc)
+        return None
 
-    raw_text = response.text.strip()
+    raw_text = response.content[0].text.strip()
 
     if raw_text.startswith("```"):
         lines = raw_text.splitlines()
@@ -50,7 +72,7 @@ async def analyse_meal_photo(image_bytes: bytes, media_type: str = "image/jpeg")
     try:
         data = json.loads(raw_text)
     except json.JSONDecodeError:
-        logger.error("Gemini returned non-JSON for meal analysis: %r", raw_text)
+        logger.error("Claude returned non-JSON for meal analysis: %r", raw_text)
         return None
 
     return data

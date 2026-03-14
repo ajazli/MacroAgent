@@ -1,5 +1,4 @@
 python-telegram-bot[webhooks]==20.7
 asyncpg==0.29.0
-google-generativeai
-Pillow
+anthropic>=0.40.0
 python-dotenv==1.0.1
