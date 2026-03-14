@@ -22,7 +22,7 @@ SYSTEM_PROMPT = (
     "If you cannot identify food, return { error: 'Could not identify food in image' }."
 )
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "claude-sonnet-4-6"
 
 
 def _get_client() -> anthropic.AsyncAnthropic:

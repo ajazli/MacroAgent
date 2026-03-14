@@ -31,6 +31,7 @@ def escape(text: str) -> str:
 
 def _aggregate_today(logs: list[dict]) -> dict:
     """Collapse a list of log rows into today's summary totals."""
+    import json as _json
     totals = {
         "calories": 0,
         "protein": 0.0,
@@ -40,9 +41,16 @@ def _aggregate_today(logs: list[dict]) -> dict:
         "steps": 0,
         "water_ml": 0,
         "weight_kg": None,
+        "workouts": [],
     }
     for row in logs:
-        data = row["data"] if isinstance(row["data"], dict) else {}
+        raw = row["data"]
+        if isinstance(raw, str):
+            try:
+                raw = _json.loads(raw)
+            except Exception:
+                raw = {}
+        data = raw if isinstance(raw, dict) else {}
         t = row["type"]
         if t == "meal":
             totals["calories"] += data.get("calories", 0)
@@ -55,8 +63,11 @@ def _aggregate_today(logs: list[dict]) -> dict:
         elif t == "water":
             totals["water_ml"] += data.get("ml", 0)
         elif t == "weight":
-            # Keep the last weight logged
             totals["weight_kg"] = data.get("kg")
+        elif t == "workout":
+            desc = data.get("description", "")
+            if desc:
+                totals["workouts"].append(desc)
     return totals
 
 
@@ -73,6 +84,8 @@ def format_today_summary(user_name: str, logs: list[dict]) -> str:
     steps = escape(f"{t['steps']:,}") if t["steps"] else escape("—")
     water = escape(f"{t['water_ml']} ml") if t["water_ml"] else escape("—")
 
+    workout_line = escape(", ".join(t["workouts"])) if t["workouts"] else escape("—")
+
     lines = [
         f"📊 *Today's Summary — {name_esc}*",
         f"_{today_str}_",
@@ -83,6 +96,7 @@ def format_today_summary(user_name: str, logs: list[dict]) -> str:
         f"👟 Steps: {steps}",
         f"💧 Water: {water}",
         f"⚖️ Weight: {weight}",
+        f"🏋️ Workout: {workout_line}",
     ]
     return "\n".join(lines)
 
@@ -169,8 +183,8 @@ def format_report(user_name: str, logs: list[dict], days: int = 7) -> str:
     lines = [
         f"📅 *7\\-Day Report — {name_esc}*",
         "",
-        escape("Date       | Cal  | Protein | Steps  | Weight"),
-        escape("-----------|------|---------|--------|-------"),
+        escape("Date       | Cal  | Protein | Steps  | Weight | Workout"),
+        escape("-----------|------|---------|--------|--------|--------"),
     ]
 
     for d in dates:
@@ -180,7 +194,8 @@ def format_report(user_name: str, logs: list[dict], days: int = 7) -> str:
         protein = f"{round(t['protein'], 1)}g" if t["protein"] else "—"
         steps = f"{t['steps']:,}" if t["steps"] else "—"
         weight = f"{t['weight_kg']}kg" if t["weight_kg"] is not None else "—"
-        row_str = f"{date_str:<10} | {cal:<4} | {protein:<7} | {steps:<6} | {weight}"
+        workout = ", ".join(t["workouts"]) if t["workouts"] else "—"
+        row_str = f"{date_str:<10} | {cal:<4} | {protein:<7} | {steps:<6} | {weight:<6} | {workout}"
         lines.append(escape(row_str))
 
     return "\n".join(lines)

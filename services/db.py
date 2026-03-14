@@ -8,6 +8,8 @@ import os
 from datetime import date
 from typing import Optional
 
+import json
+
 import asyncpg
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,10 @@ async def init_pool() -> None:
     """Initialize the shared asyncpg connection pool and run migrations."""
     global _pool
     database_url = os.environ["DATABASE_URL"]
-    _pool = await asyncpg.create_pool(database_url, min_size=2, max_size=10)
+    async def _init_conn(conn):
+        await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+
+    _pool = await asyncpg.create_pool(database_url, min_size=2, max_size=10, init=_init_conn)
     await _run_migrations()
     logger.info("Database pool initialised.")
 
