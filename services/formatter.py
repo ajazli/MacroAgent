@@ -84,7 +84,7 @@ def _aggregate_today(logs: list) -> dict:
             totals["fat"]      += data.get("fat", 0)
             totals["meal_count"] += 1
         elif t == "steps":
-            totals["steps"] += data.get("count", 0)
+            totals["steps"] += int(float(data.get("count", 0) or 0))
         elif t == "water":
             totals["water_ml"] += data.get("ml", 0)
         elif t == "weight":
@@ -491,7 +491,8 @@ def format_log_confirmation(log_type: str, data: dict) -> str:
     if log_type == "weight":
         return f"✅ Weight logged: *{escape(str(data['kg']))} kg*"
     elif log_type == "steps":
-        steps_str = f"{data['count']:,}"
+        count = int(float(data.get("count", 0) or 0))
+        steps_str = f"{count:,}"
         return f"✅ Steps logged: *{escape(steps_str)}*"
     elif log_type == "water":
         return f"✅ Water logged: *{escape(str(data['ml']))} ml*"

@@ -60,7 +60,7 @@ async def post_log(request: web.Request) -> web.Response:
         if group_chat_id and bot:
             reply = formatter.format_log_confirmation(log_type, data)
             name = formatter.escape(user["name"])
-            msg = f"📲 *{name}* logged via Shortcut:\n{reply}"
+            msg = f"📲 {reply} _\\(auto\\-logged for {name}\\)_"
             try:
                 await bot.send_message(
                     chat_id=int(group_chat_id),
