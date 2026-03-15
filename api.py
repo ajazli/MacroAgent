@@ -27,14 +27,16 @@ async def post_log(request: web.Request) -> web.Response:
     if not secret:
         return web.json_response({"error": "BOT_API_SECRET not configured"}, status=503)
 
-    auth = request.headers.get("Authorization", "")
-    if auth != f"Bearer {secret}":
-        return web.json_response({"error": "Unauthorized"}, status=401)
-
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    # Accept secret via Authorization header OR in the JSON body as "secret"
+    auth_header = request.headers.get("Authorization", "")
+    auth_body = str(body.get("secret", "")).strip()
+    if auth_header != f"Bearer {secret}" and auth_body != secret:
+        return web.json_response({"error": "Unauthorized"}, status=401)
 
     telegram_id = body.get("telegram_id")
     log_type = body.get("type")
