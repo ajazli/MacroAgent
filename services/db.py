@@ -154,9 +154,8 @@ async def insert_log(user_id: int, log_type: str, data: dict, log_date: Optional
     log_date = log_date or today_sgt()
     try:
         async with pool.acquire() as conn:
-            import json
             row = await conn.fetchrow(
-                "INSERT INTO logs (user_id, date, type, data) VALUES ($1, $2, $3, $4) "
+                "INSERT INTO logs (user_id, date, type, data) VALUES ($1, $2, $3, $4::jsonb) "
                 "RETURNING id, user_id, date, type, data, created_at",
                 user_id,
                 log_date,
