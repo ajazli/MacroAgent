@@ -13,6 +13,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from services import db, formatter
+from services.tz import today_sgt
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             )
             return
 
-        today = date.today()
+        today = today_sgt()
         start = today - timedelta(days=27)  # 28 days for 4-week exercise section
 
         parts = []

@@ -6,6 +6,8 @@ All public functions return ready-to-send MarkdownV2 strings.
 from datetime import date, timedelta
 from typing import Optional
 
+from services.tz import today_sgt
+
 
 # ---------------------------------------------------------------------------
 # MarkdownV2 escaping
@@ -111,7 +113,7 @@ def _aggregate_exercise_weeks(logs: list, num_weeks: int = 4) -> list:
     Returns list of dicts: {week_start, week_end, pushups, situps, planks, runs}.
     """
     import json as _json
-    today = date.today()
+    today = today_sgt()
     weeks = []
     for w in range(num_weeks):
         week_end   = today - timedelta(days=w * 7)
@@ -246,7 +248,7 @@ def format_today_summary(
 ) -> str:
     t = _aggregate_today(logs)
     name_esc  = escape(user_name)
-    today_str = escape(date.today().strftime("%d %b %Y"))
+    today_str = escape(today_sgt().strftime("%d %b %Y"))
 
     # Weight with change indicator
     if t["weight_kg"] is not None:
@@ -419,7 +421,7 @@ def format_report(user_name: str, logs: list, days: int = 7) -> str:
     plus a 4-week exercise progress section.
     `logs` should cover at least 28 days so the exercise section has full data.
     """
-    today = date.today()
+    today = today_sgt()
     dates = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
 
     # Bucket logs by date (nutrition table — last 7 days only)
@@ -461,7 +463,7 @@ def format_report(user_name: str, logs: list, days: int = 7) -> str:
 
 def format_meals_today(user_name: str, meal_logs: list) -> str:
     name_esc  = escape(user_name)
-    today_str = escape(date.today().strftime("%d %b %Y"))
+    today_str = escape(today_sgt().strftime("%d %b %Y"))
 
     if not meal_logs:
         return f"🍽️ *Meals — {name_esc}* \\({today_str}\\)\n\n_{escape('No meals logged today.')}_"

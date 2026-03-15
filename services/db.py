@@ -10,6 +10,8 @@ from typing import Optional
 
 import json
 
+from services.tz import today_sgt
+
 import asyncpg
 
 logger = logging.getLogger(__name__)
@@ -149,7 +151,7 @@ async def get_all_users() -> list[dict]:
 
 async def insert_log(user_id: int, log_type: str, data: dict, log_date: Optional[date] = None) -> dict:
     pool = get_pool()
-    log_date = log_date or date.today()
+    log_date = log_date or today_sgt()
     try:
         async with pool.acquire() as conn:
             import json
@@ -169,7 +171,7 @@ async def insert_log(user_id: int, log_type: str, data: dict, log_date: Optional
 
 async def get_logs_for_user_today(user_id: int, log_type: Optional[str] = None) -> list[dict]:
     pool = get_pool()
-    today = date.today()
+    today = today_sgt()
     try:
         async with pool.acquire() as conn:
             if log_type:
@@ -220,7 +222,7 @@ async def get_logs_for_user_date_range(
 async def get_all_users_logs_today() -> list[dict]:
     """Return all logs for today joined with user info."""
     pool = get_pool()
-    today = date.today()
+    today = today_sgt()
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -238,7 +240,7 @@ async def get_all_users_logs_today() -> list[dict]:
 async def get_last_weight_before_today(user_id: int) -> "Optional[float]":
     """Return the most recent weight (kg) logged before today, or None."""
     pool = get_pool()
-    today = date.today()
+    today = today_sgt()
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
