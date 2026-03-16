@@ -58,7 +58,7 @@ def build_application() -> Application:
     # -----------------------------------------------------------------------
     # Import handlers (late import keeps module-level side-effects minimal)
     # -----------------------------------------------------------------------
-    from handlers.commands import cmd_start, cmd_log, cmd_today, cmd_health
+    from handlers.commands import cmd_start, cmd_log, cmd_today, cmd_health, cmd_weight_graph, cmd_weight_avg
     from handlers.photo import handle_photo
     from handlers.instructor import cmd_stats, cmd_report, cmd_week, cmd_meals
     from handlers.fitness import build_fitness_conversation
@@ -70,6 +70,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("health", cmd_health))
     app.add_handler(CommandHandler("log", cmd_log))
     app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CommandHandler("weightgraph", cmd_weight_graph))
+    app.add_handler(CommandHandler("weightavg", cmd_weight_avg))
 
     # Instructor commands
     app.add_handler(CommandHandler("stats", cmd_stats))

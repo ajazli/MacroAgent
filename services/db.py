@@ -259,6 +259,37 @@ async def get_last_weight_before_today(user_id: int) -> "Optional[float]":
         return None
 
 
+async def get_weight_logs_for_user(user_id: int, days: int = 7) -> list[dict]:
+    """Return weight logs for the past N days, ordered oldest-first."""
+    from datetime import timedelta
+    pool = get_pool()
+    today = today_sgt()
+    start = today - timedelta(days=days - 1)
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT date, data FROM logs "
+                "WHERE user_id = $1 AND type = 'weight' AND date BETWEEN $2 AND $3 "
+                "ORDER BY date ASC, created_at DESC",
+                user_id, start, today,
+            )
+            results = []
+            for r in rows:
+                data = r["data"]
+                if isinstance(data, str):
+                    data = json.loads(data)
+                if isinstance(data, dict) and data.get("kg") is not None:
+                    results.append({"date": r["date"], "kg": float(data["kg"])})
+            # Keep only the last entry per day
+            seen = {}
+            for entry in results:
+                seen[entry["date"]] = entry["kg"]
+            return [{"date": d, "kg": kg} for d, kg in sorted(seen.items())]
+    except Exception:
+        logger.exception("get_weight_logs_for_user failed for user_id=%s", user_id)
+        return []
+
+
 async def get_all_users_logs_date_range(start: date, end: date) -> list[dict]:
     """Return all logs for all users in date range joined with user info."""
     pool = get_pool()
