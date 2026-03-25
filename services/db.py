@@ -289,6 +289,33 @@ async def get_weight_logs_for_user(user_id: int, days: int = 7) -> list[dict]:
         return []
 
 
+async def get_steps_logs_for_user(user_id: int, days: int = 7) -> list[dict]:
+    """Return daily step totals for the past N days, ordered oldest-first."""
+    pool = get_pool()
+    today = today_sgt()
+    start = today - timedelta(days=days - 1)
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT date, data FROM logs "
+                "WHERE user_id = $1 AND type = 'steps' AND date BETWEEN $2 AND $3 "
+                "ORDER BY date ASC, created_at ASC",
+                user_id, start, today,
+            )
+            # Sum all step entries per day (handles multiple logs per day)
+            daily: dict = {}
+            for r in rows:
+                data = r["data"]
+                if isinstance(data, str):
+                    data = json.loads(data)
+                count = int(float(data.get("count", 0) or 0)) if isinstance(data, dict) else 0
+                daily[r["date"]] = daily.get(r["date"], 0) + count
+            return [{"date": d, "count": c} for d, c in sorted(daily.items())]
+    except Exception:
+        logger.exception("get_steps_logs_for_user failed for user_id=%s", user_id)
+        return []
+
+
 async def get_log_streak(user_id: int) -> int:
     """Return consecutive days ending today that have at least one log entry."""
     pool = get_pool()

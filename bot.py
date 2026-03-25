@@ -54,14 +54,17 @@ async def _post_init(application: Application) -> None:
     user_commands = [
         BotCommand("start",       "Welcome & command guide"),
         BotCommand("today",       "Today's summary"),
-        BotCommand("log",         "Log weight / steps / water / workout"),
-        BotCommand("steps",       "Log step count (or auto-logged from iOS Health)"),
+        BotCommand("weight",      "Log your weight (kg)"),
+        BotCommand("steps",       "Log step count (auto-logged from iOS Health)"),
         BotCommand("sleep",       "Log sleep hours"),
         BotCommand("energy",      "Log energy level (1-10)"),
         BotCommand("water",       "Log water intake (ml)"),
+        BotCommand("workout",     "Log a workout note"),
         BotCommand("myreport",    "Your 7-day nutrition & exercise report"),
         BotCommand("weightgraph", "Weight trend chart (past 7 days)"),
         BotCommand("weightavg",   "Weight average & stats"),
+        BotCommand("stepsgraph",  "Steps chart (past 7 days)"),
+        BotCommand("stepsavg",    "Steps average & stats"),
         BotCommand("leaderboard", "Weekly group rankings"),
         BotCommand("checkin",     "Start your weekly check-in"),
         BotCommand("pushups",     "Log push-ups"),
@@ -109,9 +112,10 @@ def build_application() -> Application:
     # Import handlers (late import keeps module-level side-effects minimal)
     # -----------------------------------------------------------------------
     from handlers.commands import (
-        cmd_start, cmd_log, cmd_today, cmd_health,
-        cmd_weight_graph, cmd_weight_avg,
-        cmd_sleep, cmd_energy, cmd_water, cmd_steps,
+        cmd_start, cmd_today, cmd_health,
+        cmd_weight, cmd_weight_graph, cmd_weight_avg,
+        cmd_steps, cmd_steps_graph, cmd_steps_avg,
+        cmd_sleep, cmd_energy, cmd_water, cmd_workout,
         cmd_myreport, cmd_leaderboard,
     )
     from handlers.photo import handle_photo
@@ -125,16 +129,19 @@ def build_application() -> Application:
     # -----------------------------------------------------------------------
     # Register command handlers
     # -----------------------------------------------------------------------
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("health", cmd_health))
-    app.add_handler(CommandHandler("log", cmd_log))
+    app.add_handler(CommandHandler("start",       cmd_start))
+    app.add_handler(CommandHandler("health",      cmd_health))
     app.add_handler(CommandHandler("today",       cmd_today))
-    app.add_handler(CommandHandler("weightgraph", cmd_weight_graph))
-    app.add_handler(CommandHandler("weightavg",   cmd_weight_avg))
+    app.add_handler(CommandHandler("weight",      cmd_weight))
     app.add_handler(CommandHandler("steps",       cmd_steps))
     app.add_handler(CommandHandler("sleep",       cmd_sleep))
     app.add_handler(CommandHandler("energy",      cmd_energy))
     app.add_handler(CommandHandler("water",       cmd_water))
+    app.add_handler(CommandHandler("workout",     cmd_workout))
+    app.add_handler(CommandHandler("weightgraph", cmd_weight_graph))
+    app.add_handler(CommandHandler("weightavg",   cmd_weight_avg))
+    app.add_handler(CommandHandler("stepsgraph",  cmd_steps_graph))
+    app.add_handler(CommandHandler("stepsavg",    cmd_steps_avg))
     app.add_handler(CommandHandler("myreport",    cmd_myreport))
     app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
 
