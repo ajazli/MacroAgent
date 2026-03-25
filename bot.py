@@ -55,6 +55,7 @@ async def _post_init(application: Application) -> None:
         BotCommand("start",       "Welcome & command guide"),
         BotCommand("today",       "Today's summary"),
         BotCommand("log",         "Log weight / steps / water / workout"),
+        BotCommand("steps",       "Log step count (or auto-logged from iOS Health)"),
         BotCommand("sleep",       "Log sleep hours"),
         BotCommand("energy",      "Log energy level (1-10)"),
         BotCommand("water",       "Log water intake (ml)"),
@@ -107,7 +108,7 @@ def build_application() -> Application:
     from handlers.commands import (
         cmd_start, cmd_log, cmd_today, cmd_health,
         cmd_weight_graph, cmd_weight_avg,
-        cmd_sleep, cmd_energy, cmd_water,
+        cmd_sleep, cmd_energy, cmd_water, cmd_steps,
         cmd_myreport, cmd_leaderboard,
     )
     from handlers.photo import handle_photo
@@ -127,6 +128,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("today",       cmd_today))
     app.add_handler(CommandHandler("weightgraph", cmd_weight_graph))
     app.add_handler(CommandHandler("weightavg",   cmd_weight_avg))
+    app.add_handler(CommandHandler("steps",       cmd_steps))
     app.add_handler(CommandHandler("sleep",       cmd_sleep))
     app.add_handler(CommandHandler("energy",      cmd_energy))
     app.add_handler(CommandHandler("water",       cmd_water))

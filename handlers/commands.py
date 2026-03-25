@@ -43,7 +43,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "I help track meals, workouts, weight, sleep, steps & more\\.\n\n"
         "*Daily logging:*\n"
         "`/log weight 74\\.2` — log weight\n"
-        "`/log steps 8500` — log steps\n"
+        "`/steps 8500` — log steps \\(auto\\-logged via iOS Shortcut\\)\n"
         "`/sleep 7\\.5` — log sleep hours\n"
         "`/energy 8` — log energy level \\(1–10\\)\n"
         "`/water 500` — log water \\(ml\\)\n"
@@ -395,6 +395,37 @@ async def cmd_energy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await db.insert_log(user["id"], "energy", data)
     await update.message.reply_text(
         formatter.format_log_confirmation("energy", data),
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+
+# ---------------------------------------------------------------------------
+# /steps — shorthand for /log steps
+# ---------------------------------------------------------------------------
+
+async def cmd_steps(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await _ensure_registered(update)
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            formatter.escape("Usage: /steps 8500\n\nTip: Auto-log steps daily via the iOS Shortcut — ask the instructor for setup details."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+    try:
+        count = int(float(args[0]))
+        if count < 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            formatter.escape(f"'{args[0]}' is not a valid step count."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+    data = {"count": count}
+    await db.insert_log(user["id"], "steps", data)
+    await update.message.reply_text(
+        formatter.format_log_confirmation("steps", data),
         parse_mode=ParseMode.MARKDOWN_V2,
     )
 
