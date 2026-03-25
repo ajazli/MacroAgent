@@ -50,7 +50,7 @@ async def _post_init(application: Application) -> None:
         logger.warning("GROUP_CHAT_ID not set — scheduler and Clocker topic disabled")
 
     # Register command menu (shows up when users type / in Telegram)
-    from telegram import BotCommand
+    from telegram import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
     user_commands = [
         BotCommand("start",       "Welcome & command guide"),
         BotCommand("today",       "Today's summary"),
@@ -76,8 +76,11 @@ async def _post_init(application: Application) -> None:
         BotCommand("health",      "Bot health check"),
     ]
     try:
-        await application.bot.set_my_commands(user_commands)
-        logger.info("Bot command menu registered.")
+        # Register for all group chats (all members see the menu when they type /)
+        await application.bot.set_my_commands(user_commands, scope=BotCommandScopeAllGroupChats())
+        # Also register for private chats
+        await application.bot.set_my_commands(user_commands, scope=BotCommandScopeAllPrivateChats())
+        logger.info("Bot command menu registered for groups and private chats.")
     except Exception as exc:
         logger.warning("Could not register bot commands: %s", exc)
 
