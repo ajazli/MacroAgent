@@ -488,6 +488,55 @@ async def delete_check_in_schedule(user_id: int) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Indefinite weekly schedule helpers
+# ---------------------------------------------------------------------------
+
+async def set_weekly_schedule(user_id: int, day_of_week: int) -> None:
+    """Upsert a user's indefinite weekly check-in day (0=Mon … 6=Sun)."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO user_weekly_schedules (user_id, day_of_week) VALUES ($1, $2) "
+                "ON CONFLICT (user_id) DO UPDATE SET day_of_week = EXCLUDED.day_of_week, created_at = NOW()",
+                user_id, day_of_week,
+            )
+    except Exception:
+        logger.exception("set_weekly_schedule failed for user_id=%s", user_id)
+        raise
+
+
+async def remove_weekly_schedule(user_id: int) -> bool:
+    """Remove a user's indefinite weekly schedule. Returns True if one existed."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM user_weekly_schedules WHERE user_id = $1", user_id
+            )
+            return result != "DELETE 0"
+    except Exception:
+        logger.exception("remove_weekly_schedule failed for user_id=%s", user_id)
+        return False
+
+
+async def get_all_weekly_schedules() -> list[dict]:
+    """Return all users with an indefinite weekly schedule."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT w.user_id, w.day_of_week, u.name, u.telegram_id "
+                "FROM user_weekly_schedules w JOIN users u ON u.id = w.user_id "
+                "ORDER BY u.name",
+            )
+            return [dict(r) for r in rows]
+    except Exception:
+        logger.exception("get_all_weekly_schedules failed")
+        return []
+
+
 async def get_all_users_logs_date_range(start: date, end: date) -> list[dict]:
     """Return all logs for all users in date range joined with user info."""
     pool = get_pool()

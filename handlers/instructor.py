@@ -238,23 +238,32 @@ async def cmd_scheduleweekly(update: Update, context: ContextTypes.DEFAULT_TYPE)
     args = context.args or []
     if len(args) < 2:
         await update.message.reply_text(
-            formatter.escape("Usage: /scheduleweekly @username <day> [weeks]\nExample: /scheduleweekly @jazli saturday 8"),
+            formatter.escape(
+                "Usage: /scheduleweekly @username <day> [weeks]\n\n"
+                "Omit weeks for indefinite (runs every week forever).\n"
+                "Examples:\n"
+                "  /scheduleweekly @jazli saturday\n"
+                "  /scheduleweekly @jazli saturday 4"
+            ),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
 
     raw_username = args[0].lstrip("@").lower()
     day_str = args[1].lower()
-    try:
-        weeks = int(args[2]) if len(args) >= 3 else 8
-        if not 1 <= weeks <= 52:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text(
-            formatter.escape("Weeks must be a number between 1 and 52."),
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        return
+    indefinite = len(args) < 3
+
+    if not indefinite:
+        try:
+            weeks = int(args[2])
+            if not 1 <= weeks <= 52:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(
+                formatter.escape("Weeks must be a number between 1 and 52."),
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+            return
 
     if day_str not in _DAYS:
         await update.message.reply_text(
@@ -274,26 +283,74 @@ async def cmd_scheduleweekly(update: Update, context: ContextTypes.DEFAULT_TYPE)
     weekday = _DAYS[day_str]
     today = today_sgt()
     first = _next_weekday_after(today, weekday)
-
-    scheduled_dates = [first + timedelta(weeks=i) for i in range(weeks)]
+    name_esc = formatter.escape(user["name"])
+    day_disp = formatter.escape(day_str.capitalize())
 
     try:
-        for d in scheduled_dates:
-            await db.schedule_check_in(user["id"], d)
-
-        name_esc = formatter.escape(user["name"])
-        first_disp = formatter.escape(first.strftime("%d %b %Y"))
-        last_disp = formatter.escape(scheduled_dates[-1].strftime("%d %b %Y"))
-        day_disp = formatter.escape(day_str.capitalize())
-        await update.message.reply_text(
-            f"✅ *{name_esc}* scheduled every *{day_disp}* for {formatter.escape(str(weeks))} weeks\n"
-            f"📅 {first_disp} → {last_disp}",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
+        if indefinite:
+            # Store recurring preference + schedule the first upcoming entry
+            await db.set_weekly_schedule(user["id"], weekday)
+            await db.schedule_check_in(user["id"], first)
+            first_disp = formatter.escape(first.strftime("%d %b %Y"))
+            await update.message.reply_text(
+                f"✅ *{name_esc}* set to check in every *{day_disp}* indefinitely\n"
+                f"📅 First check\\-in: {first_disp}\n"
+                f"_Use /stopweekly @{formatter.escape(raw_username)} to cancel_",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+        else:
+            scheduled_dates = [first + timedelta(weeks=i) for i in range(weeks)]
+            for d in scheduled_dates:
+                await db.schedule_check_in(user["id"], d)
+            first_disp = formatter.escape(first.strftime("%d %b %Y"))
+            last_disp = formatter.escape(scheduled_dates[-1].strftime("%d %b %Y"))
+            await update.message.reply_text(
+                f"✅ *{name_esc}* scheduled every *{day_disp}* for {formatter.escape(str(weeks))} weeks\n"
+                f"📅 {first_disp} → {last_disp}",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
     except Exception:
         logger.exception("Error in cmd_scheduleweekly")
         await update.message.reply_text(
             formatter.escape("⚠️ Could not schedule check-ins. Please try again."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+
+
+# ---------------------------------------------------------------------------
+# /stopweekly @username — cancel indefinite recurring schedule
+# ---------------------------------------------------------------------------
+
+@_guard
+async def cmd_stopweekly(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            formatter.escape("Usage: /stopweekly @username"),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    raw_username = args[0].lstrip("@").lower()
+    user = await db.get_user_by_username(raw_username)
+    if user is None:
+        await update.message.reply_text(
+            formatter.escape(f"User '@{raw_username}' not found."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    removed = await db.remove_weekly_schedule(user["id"])
+    name_esc = formatter.escape(user["name"])
+    if removed:
+        await update.message.reply_text(
+            f"✅ Indefinite weekly check\\-in cancelled for *{name_esc}*\n"
+            f"_Existing scheduled dates remain — use /clearschedule to remove those too_",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+    else:
+        await update.message.reply_text(
+            formatter.escape(f"No indefinite schedule found for @{raw_username}."),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
 

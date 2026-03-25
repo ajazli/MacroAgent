@@ -62,11 +62,28 @@ async def daily_morning_prompt(bot, group_chat_id: int, clocker_topic_id: Option
 
 
 async def weekly_checkin_trigger(bot, group_chat_id: int, clocker_topic_id: Optional[int]) -> None:
-    """10am SGT check — ping users whose weekly check-in is due today."""
-    from services.db import get_check_ins_for_date, mark_check_in_prompted
+    """10am SGT check — ping users whose weekly check-in is due today, and
+    auto-schedule the next occurrence for users on an indefinite recurring plan."""
+    from datetime import timedelta
+    from services.db import (
+        get_check_ins_for_date, mark_check_in_prompted,
+        get_all_weekly_schedules, schedule_check_in,
+    )
     from services.tz import today_sgt
 
     today = today_sgt()
+
+    # Auto-schedule next week's entry for all indefinite users who don't
+    # already have one queued up for their next occurrence.
+    try:
+        weekly = await get_all_weekly_schedules()
+        for w in weekly:
+            days_ahead = (w["day_of_week"] - today.weekday()) % 7 or 7
+            next_date = today + timedelta(days=days_ahead)
+            await schedule_check_in(w["user_id"], next_date)
+    except Exception as exc:
+        logger.warning("Could not auto-schedule weekly check-ins: %s", exc)
+
     due = await get_check_ins_for_date(today)
     if not due:
         return
