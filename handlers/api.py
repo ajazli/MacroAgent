@@ -82,15 +82,20 @@ async def post_log(request: web.Request) -> web.Response:
         group_chat_id = os.environ.get("GROUP_CHAT_ID", "").strip()
         bot = request.app["bot"]
         if group_chat_id and bot:
+            from services.scheduler import get_clocker_topic_id
             reply = formatter.format_log_confirmation(log_type, data)
             name = formatter.escape(user["name"])
             msg = f"📲 {reply} _\\(auto\\-logged for {name}\\)_"
+            send_kwargs = {
+                "chat_id": int(group_chat_id),
+                "text": msg,
+                "parse_mode": ParseMode.MARKDOWN_V2,
+            }
+            clocker_topic_id = get_clocker_topic_id()
+            if clocker_topic_id:
+                send_kwargs["message_thread_id"] = clocker_topic_id
             try:
-                await bot.send_message(
-                    chat_id=int(group_chat_id),
-                    text=msg,
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                )
+                await bot.send_message(**send_kwargs)
             except Exception:
                 logger.exception("Failed to send group confirmation for user=%s", user["name"])
 
