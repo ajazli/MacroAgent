@@ -121,7 +121,7 @@ def build_application() -> Application:
     from handlers.photo import handle_photo
     from handlers.instructor import (
         cmd_stats, cmd_report, cmd_week, cmd_meals,
-        cmd_schedule, cmd_checkinstatus, cmd_clearschedule,
+        cmd_schedule, cmd_scheduleweekly, cmd_checkinstatus, cmd_clearschedule,
     )
     from handlers.fitness import build_fitness_conversation
     from handlers.checkin import build_checkin_conversation
@@ -150,7 +150,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("report",         cmd_report))
     app.add_handler(CommandHandler("week",           cmd_week))
     app.add_handler(CommandHandler("meals",          cmd_meals))
-    app.add_handler(CommandHandler("schedule",       cmd_schedule))
+    app.add_handler(CommandHandler("schedule",        cmd_schedule))
+    app.add_handler(CommandHandler("scheduleweekly", cmd_scheduleweekly))
     app.add_handler(CommandHandler("checkinstatus",  cmd_checkinstatus))
     app.add_handler(CommandHandler("clearschedule",  cmd_clearschedule))
 
