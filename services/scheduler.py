@@ -43,16 +43,17 @@ def _escape(text: str) -> str:
     return "".join(f"\\{c}" if c in special else c for c in str(text))
 
 
-async def daily_morning_prompt(bot, group_chat_id: int, clocker_topic_id: Optional[int]) -> None:
+async def daily_morning_prompt(bot, group_chat_id: int) -> None:
     """8am SGT daily prompt for weight, sleep, energy, water."""
     text = (
         "🌅 *Good morning\\!* Time to log your daily metrics:\n\n"
-        "⚖️ `/log weight` _e\\.g\\. /log weight 74\\.2_\n"
+        "⚖️ `/weight` _e\\.g\\. /weight 74\\.2_\n"
         "😴 `/sleep` _e\\.g\\. /sleep 7\\.5_\n"
         "⚡ `/energy` _e\\.g\\. /energy 8_\n"
         "💧 `/water` _e\\.g\\. /water 500_"
     )
     kwargs = {"chat_id": group_chat_id, "text": text, "parse_mode": "MarkdownV2"}
+    clocker_topic_id = get_clocker_topic_id()
     if clocker_topic_id:
         kwargs["message_thread_id"] = clocker_topic_id
     try:
@@ -61,7 +62,7 @@ async def daily_morning_prompt(bot, group_chat_id: int, clocker_topic_id: Option
         logger.error("Failed to send daily morning prompt: %s", exc)
 
 
-async def weekly_checkin_trigger(bot, group_chat_id: int, clocker_topic_id: Optional[int]) -> None:
+async def weekly_checkin_trigger(bot, group_chat_id: int) -> None:
     """10am SGT check — ping users whose weekly check-in is due today, and
     auto-schedule the next occurrence for users on an indefinite recurring plan."""
     from datetime import timedelta
@@ -72,6 +73,7 @@ async def weekly_checkin_trigger(bot, group_chat_id: int, clocker_topic_id: Opti
     from services.tz import today_sgt
 
     today = today_sgt()
+    clocker_topic_id = get_clocker_topic_id()
 
     # Auto-schedule next week's entry for all indefinite users who don't
     # already have one queued up for their next occurrence.
@@ -108,19 +110,23 @@ async def weekly_checkin_trigger(bot, group_chat_id: int, clocker_topic_id: Opti
 
 def start_scheduler(bot, group_chat_id: int, clocker_topic_id: Optional[int]) -> AsyncIOScheduler:
     global _scheduler
+    # Cache the resolved topic ID so jobs can read it dynamically via get_clocker_topic_id()
+    global _clocker_topic_id
+    _clocker_topic_id = clocker_topic_id
+
     _scheduler = AsyncIOScheduler(timezone="Asia/Singapore")
 
     _scheduler.add_job(
         daily_morning_prompt,
         "cron", hour=8, minute=0,
-        args=[bot, group_chat_id, clocker_topic_id],
+        args=[bot, group_chat_id],
         id="daily_morning_prompt",
         replace_existing=True,
     )
     _scheduler.add_job(
         weekly_checkin_trigger,
         "cron", hour=10, minute=0,
-        args=[bot, group_chat_id, clocker_topic_id],
+        args=[bot, group_chat_id],
         id="weekly_checkin_trigger",
         replace_existing=True,
     )

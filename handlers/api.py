@@ -27,10 +27,6 @@ async def post_log(request: web.Request) -> web.Response:
     if not secret:
         return web.json_response({"error": "BOT_API_SECRET not configured"}, status=503)
 
-    auth = request.headers.get("Authorization", "")
-    if auth != f"Bearer {secret}":
-        return web.json_response({"error": "Unauthorized"}, status=401)
-
     try:
         body = await request.json()
     except Exception:
@@ -38,6 +34,12 @@ async def post_log(request: web.Request) -> web.Response:
 
     if not isinstance(body, dict):
         return web.json_response({"error": "Body must be a JSON object"}, status=400)
+
+    # Accept auth from header OR body (iOS Shortcuts can inject invisible chars in headers)
+    auth_header = request.headers.get("Authorization", "")
+    auth_body = body.get("secret", "")
+    if auth_header != f"Bearer {secret}" and auth_body != secret:
+        return web.json_response({"error": "Unauthorized"}, status=401)
 
     telegram_id = body.get("telegram_id")
     log_type = body.get("type")
