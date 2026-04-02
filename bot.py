@@ -12,8 +12,10 @@ import os
 
 from dotenv import load_dotenv
 from telegram import Update
+from telegram import ChatMemberUpdated
 from telegram.ext import (
     Application,
+    ChatMemberHandler,
     CommandHandler,
     MessageHandler,
     filters,
@@ -32,22 +34,21 @@ logger = logging.getLogger(__name__)
 
 async def _post_init(application: Application) -> None:
     """Initialise DB, start scheduler, and register bot commands."""
-    from services.db import init_pool
+    from services.db import init_pool, get_all_groups
+    from services.scheduler import resolve_clocker_topic, start_scheduler
     await init_pool()
     logger.info("DB pool ready.")
 
-    # Start scheduler if GROUP_CHAT_ID is configured
-    group_chat_id_str = os.environ.get("GROUP_CHAT_ID", "").strip()
-    if group_chat_id_str:
-        try:
-            group_chat_id = int(group_chat_id_str)
-            from services.scheduler import resolve_clocker_topic, start_scheduler
-            clocker_topic_id = await resolve_clocker_topic(application.bot, group_chat_id)
-            start_scheduler(application.bot, group_chat_id, clocker_topic_id)
-        except Exception as exc:
-            logger.warning("Scheduler could not start: %s", exc)
-    else:
-        logger.warning("GROUP_CHAT_ID not set — scheduler and Clocker topic disabled")
+    # Start scheduler — it auto-discovers all registered groups from the DB
+    try:
+        start_scheduler(application.bot)
+        # Pre-warm the Clocker topic cache for already-known groups
+        groups = await get_all_groups()
+        for g in groups:
+            await resolve_clocker_topic(application.bot, g["chat_id"])
+        logger.info("Scheduler started for %d known group(s).", len(groups))
+    except Exception as exc:
+        logger.warning("Scheduler could not start: %s", exc)
 
     # Register command menu (shows up when users type / in Telegram)
     from telegram import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
@@ -95,6 +96,36 @@ async def _post_shutdown(application: Application) -> None:
     await close_pool()
     stop_scheduler()
     logger.info("DB pool closed.")
+
+
+async def _register_group(bot, chat) -> None:
+    """Register a group in the DB and resolve its Clocker topic."""
+    from services.db import register_group
+    from services.scheduler import resolve_clocker_topic
+    if chat.type not in ("group", "supergroup"):
+        return
+    await register_group(chat.id, chat.title or "")
+    await resolve_clocker_topic(bot, chat.id)
+    logger.info("Registered group: %s (%s)", chat.title, chat.id)
+
+
+async def _on_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fires when the bot's membership in a chat changes (added/removed)."""
+    change: ChatMemberUpdated = update.my_chat_member
+    new_status = change.new_chat_member.status
+    if new_status in ("member", "administrator"):
+        await _register_group(context.bot, change.chat)
+
+
+async def _on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Passively register the group on any non-command group message."""
+    chat = update.effective_chat
+    if chat and chat.id:
+        from services.db import get_all_groups
+        groups = await get_all_groups()
+        known_ids = {g["chat_id"] for g in groups}
+        if chat.id not in known_ids:
+            await _register_group(context.bot, chat)
 
 
 def build_application() -> Application:
@@ -159,6 +190,10 @@ def build_application() -> Application:
     # Conversations — must be registered before the photo handler
     app.add_handler(build_fitness_conversation())
     app.add_handler(build_checkin_conversation())
+
+    # Auto-register any group the bot is active in
+    app.add_handler(ChatMemberHandler(_on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, _on_group_message))
 
     # Photo handler — catches all photos in private chats and groups
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))

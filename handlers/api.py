@@ -80,26 +80,28 @@ async def post_log(request: web.Request) -> web.Response:
         await db.insert_log(user["id"], log_type, data)
         logger.info("API log: user=%s type=%s data=%s", user["name"], log_type, data)
 
-        # Send confirmation to group chat if configured
-        group_chat_id = os.environ.get("GROUP_CHAT_ID", "").strip()
+        # Send confirmation to all registered groups
         bot = request.app["bot"]
-        if group_chat_id and bot:
+        if bot:
+            from services.db import get_all_groups
             from services.scheduler import get_clocker_topic_id
             reply = formatter.format_log_confirmation(log_type, data)
             name = formatter.escape(user["name"])
             msg = f"📲 {reply} _\\(auto\\-logged for {name}\\)_"
-            send_kwargs = {
-                "chat_id": int(group_chat_id),
-                "text": msg,
-                "parse_mode": ParseMode.MARKDOWN_V2,
-            }
-            clocker_topic_id = get_clocker_topic_id()
-            if clocker_topic_id:
-                send_kwargs["message_thread_id"] = clocker_topic_id
-            try:
-                await bot.send_message(**send_kwargs)
-            except Exception:
-                logger.exception("Failed to send group confirmation for user=%s", user["name"])
+            groups = await get_all_groups()
+            for g in groups:
+                send_kwargs = {
+                    "chat_id": g["chat_id"],
+                    "text": msg,
+                    "parse_mode": ParseMode.MARKDOWN_V2,
+                }
+                topic_id = get_clocker_topic_id(g["chat_id"])
+                if topic_id:
+                    send_kwargs["message_thread_id"] = topic_id
+                try:
+                    await bot.send_message(**send_kwargs)
+                except Exception:
+                    logger.exception("Failed to send group confirmation to %s", g["chat_id"])
 
         return web.json_response({"ok": True, "user": user["name"], "type": log_type})
     except Exception as exc:

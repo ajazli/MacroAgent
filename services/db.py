@@ -489,6 +489,49 @@ async def delete_check_in_schedule(user_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Group registry helpers
+# ---------------------------------------------------------------------------
+
+async def register_group(chat_id: int, title: str) -> None:
+    """Upsert a group the bot is active in (title may change over time)."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO groups (chat_id, title) VALUES ($1, $2) "
+                "ON CONFLICT (chat_id) DO UPDATE SET title = EXCLUDED.title",
+                chat_id, title,
+            )
+    except Exception:
+        logger.exception("register_group failed for chat_id=%s", chat_id)
+
+
+async def get_all_groups() -> list[dict]:
+    """Return all registered groups."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT chat_id, title, clocker_topic_id FROM groups ORDER BY registered_at")
+            return [dict(r) for r in rows]
+    except Exception:
+        logger.exception("get_all_groups failed")
+        return []
+
+
+async def set_group_clocker_topic(chat_id: int, clocker_topic_id: Optional[int]) -> None:
+    """Cache the resolved Clocker topic ID for a group."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE groups SET clocker_topic_id = $1 WHERE chat_id = $2",
+                clocker_topic_id, chat_id,
+            )
+    except Exception:
+        logger.exception("set_group_clocker_topic failed for chat_id=%s", chat_id)
+
+
+# ---------------------------------------------------------------------------
 # Indefinite weekly schedule helpers
 # ---------------------------------------------------------------------------
 
