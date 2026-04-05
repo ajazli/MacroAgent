@@ -95,7 +95,8 @@ async def post_log(request: web.Request) -> web.Response:
                     "text": msg,
                     "parse_mode": ParseMode.MARKDOWN_V2,
                 }
-                topic_id = get_clocker_topic_id(g["chat_id"])
+                # Prefer in-memory cache (populated at startup), fall back to DB value
+                topic_id = get_clocker_topic_id(g["chat_id"]) or g.get("clocker_topic_id")
                 if topic_id:
                     send_kwargs["message_thread_id"] = topic_id
                 try:
