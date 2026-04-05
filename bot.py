@@ -35,15 +35,30 @@ logger = logging.getLogger(__name__)
 
 async def _post_init(application: Application) -> None:
     """Initialise DB, start scheduler, and register bot commands."""
-    from services.db import init_pool, get_all_groups
+    from services.db import init_pool, get_all_groups, register_group
     from services.scheduler import resolve_clocker_topic, start_scheduler
     await init_pool()
     logger.info("DB pool ready.")
 
+    # If GROUP_CHAT_ID is still set, ensure that group is registered in the DB
+    # (handles the case where bot restarts before receiving any new group messages)
+    group_chat_id_str = os.environ.get("GROUP_CHAT_ID", "").strip()
+    if group_chat_id_str:
+        try:
+            gid = int(group_chat_id_str)
+            try:
+                chat = await application.bot.get_chat(gid)
+                await register_group(gid, chat.title or "")
+            except Exception:
+                await register_group(gid, "")
+            await resolve_clocker_topic(application.bot, gid)
+            logger.info("Seeded group from GROUP_CHAT_ID: %s", gid)
+        except Exception as exc:
+            logger.warning("Could not seed group from GROUP_CHAT_ID: %s", exc)
+
     # Start scheduler — it auto-discovers all registered groups from the DB
     try:
         start_scheduler(application.bot)
-        # Pre-warm the Clocker topic cache for already-known groups
         groups = await get_all_groups()
         for g in groups:
             await resolve_clocker_topic(application.bot, g["chat_id"])
