@@ -43,7 +43,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "I help track your meals by breaking down their macros just from looking at your photos!\\.\n\n"
         "📸 Send any food photo for AI meal analysis\\!"
     )
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
 
 
 # ---------------------------------------------------------------------------
