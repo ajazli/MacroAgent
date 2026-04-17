@@ -1,6 +1,10 @@
 """
 Photo message handler — analyses meal photos via Claude vision API.
-Triggered when a user sends a photo (with or without a meal-related caption).
+
+Triggered two ways:
+  1. Auto: user sends any photo (private chat) or a photo with a meal keyword caption (groups)
+  2. Command: /meal — send a photo with /meal as caption, or reply to a photo with /meal
+     Works in groups even when bot privacy mode is enabled, since commands are always received.
 """
 
 import logging
@@ -17,62 +21,57 @@ _MEAL_KEYWORDS = {"meal", "food", "makan", "lunch", "dinner", "breakfast", "snac
 
 ANALYSIS_ERROR_MSG = (
     "⚠️ Could not analyse this meal\\. "
-    "Try `/log meal` manually or resend a clearer photo\\."
+    "Try `/meal` with a clearer photo or log manually with `/log meal`\\."
 )
 
 
 def _is_meal_photo(update: Update) -> bool:
-    """Return True if the photo should be treated as a meal entry."""
+    """Return True if the photo should trigger auto-analysis.
+
+    Private chats: any photo (no caption = meal).
+    Group chats: only if caption contains a meal keyword (avoids analysing
+    every meme/photo sent in the group).
+    """
     msg = update.effective_message
     if not msg.photo:
         return False
+
+    chat = update.effective_chat
     caption = (msg.caption or "").strip().lower()
-    # No caption → treat as meal; caption contains a meal keyword → treat as meal
+
+    if chat and chat.type in ("group", "supergroup"):
+        # In groups, require an explicit meal keyword so random photos are ignored
+        return any(kw in caption for kw in _MEAL_KEYWORDS)
+
+    # Private chat: no caption → treat as meal; meal keyword → treat as meal
     if not caption:
         return True
     return any(kw in caption for kw in _MEAL_KEYWORDS)
 
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_meal_photo(update):
-        return  # Ignore non-meal photos silently
-
-    tg_user = update.effective_user
-    message = update.effective_message
-
-    # Auto-register if needed
-    try:
-        display_name = tg_user.username.lower() if tg_user.username else (tg_user.first_name or "user").lower()
-        user = await db.get_or_create_user(tg_user.id, display_name)
-    except Exception:
-        logger.exception("DB error auto-registering user %s during photo handler", tg_user.id)
-        await message.reply_text(
-            formatter.escape("⚠️ Could not register you in the database. Please try /start first."),
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        return
-
-    # Send a "processing" placeholder so the user knows we're working
-    processing_msg = await message.reply_text(
+async def _run_meal_analysis(
+    photo_message,
+    reply_message,
+    user: dict,
+    tg_user,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Download the photo from photo_message, run Claude analysis, persist, and reply."""
+    processing_msg = await reply_message.reply_text(
         formatter.escape("🔍 Analysing your meal photo…"),
         parse_mode=ParseMode.MARKDOWN_V2,
     )
 
-    # Download the highest-resolution photo available
-    photo = message.photo[-1]
+    photo = photo_message.photo[-1]
     try:
         tg_file = await context.bot.get_file(photo.file_id)
         image_bytes = await tg_file.download_as_bytearray()
         image_bytes = bytes(image_bytes)
     except Exception:
         logger.exception("Failed to download photo from Telegram for user %s", tg_user.id)
-        await processing_msg.edit_text(
-            ANALYSIS_ERROR_MSG,
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
+        await processing_msg.edit_text(ANALYSIS_ERROR_MSG, parse_mode=ParseMode.MARKDOWN_V2)
         return
 
-    # Determine MIME type from Telegram file path (usually .jpg)
     file_path: str = tg_file.file_path or ""
     if file_path.lower().endswith(".png"):
         media_type = "image/png"
@@ -81,7 +80,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     else:
         media_type = "image/jpeg"
 
-    # Call Claude vision
     try:
         raw_result = await nutrition.analyse_meal_photo(image_bytes, media_type=media_type)
     except Exception:
@@ -92,7 +90,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await processing_msg.edit_text(ANALYSIS_ERROR_MSG, parse_mode=ParseMode.MARKDOWN_V2)
         return
 
-    # Debug: surface API errors temporarily
     if raw_result and "_debug_error" in raw_result:
         from services.formatter import escape
         await processing_msg.edit_text(
@@ -101,12 +98,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    # Claude indicated it couldn't identify food
     if "error" in raw_result:
         await processing_msg.edit_text(ANALYSIS_ERROR_MSG, parse_mode=ParseMode.MARKDOWN_V2)
         return
 
-    # Normalise and persist
     try:
         meal_data = nutrition.normalise_nutrition(raw_result)
         await db.insert_log(user["id"], "meal", meal_data)
@@ -118,6 +113,73 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    # Format and send the result
     reply = formatter.format_meal_analysis(meal_data)
     await processing_msg.edit_text(reply, parse_mode=ParseMode.MARKDOWN_V2)
+
+
+async def _resolve_user(tg_user, message):
+    """Auto-register user and return DB row, or send error and return None."""
+    try:
+        display_name = (
+            tg_user.username.lower() if tg_user.username
+            else (tg_user.first_name or "user").lower()
+        )
+        return await db.get_or_create_user(tg_user.id, display_name)
+    except Exception:
+        logger.exception("DB error auto-registering user %s", tg_user.id)
+        await message.reply_text(
+            formatter.escape("⚠️ Could not register you. Please try /start first."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return None
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Auto-triggered when a photo message is received."""
+    if not _is_meal_photo(update):
+        return
+
+    tg_user = update.effective_user
+    message = update.effective_message
+
+    user = await _resolve_user(tg_user, message)
+    if user is None:
+        return
+
+    await _run_meal_analysis(message, message, user, tg_user, context)
+
+
+async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /meal command — analyse a meal photo in any chat, including groups with privacy mode on.
+
+    Usage:
+      • Send a photo with /meal as the caption  →  analyses that photo
+      • Reply to someone's photo with /meal     →  analyses the replied-to photo
+    """
+    message = update.effective_message
+    tg_user = update.effective_user
+
+    # Determine which message holds the photo
+    photo_message = None
+    if message.photo:
+        photo_message = message
+    elif message.reply_to_message and message.reply_to_message.photo:
+        photo_message = message.reply_to_message
+
+    if photo_message is None:
+        await message.reply_text(
+            formatter.escape(
+                "📸 To analyse a meal:\n"
+                "• Send a food photo with /meal as the caption\n"
+                "• Or reply to a food photo with /meal"
+            ),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    user = await _resolve_user(tg_user, message)
+    if user is None:
+        return
+
+    await _run_meal_analysis(photo_message, message, user, tg_user, context)

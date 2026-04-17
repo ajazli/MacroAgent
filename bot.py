@@ -67,6 +67,7 @@ async def _post_init(application: Application) -> None:
         BotCommand("stepsgraph",  "Steps chart (past 7 days)"),
         BotCommand("stepsavg",    "Steps average & stats"),
         BotCommand("leaderboard", "Weekly group rankings"),
+        BotCommand("meal",        "Analyse a meal photo (send photo with /meal or reply to one)"),
         BotCommand("checkin",     "Start your weekly check-in"),
         BotCommand("pushups",     "Log push-ups"),
         BotCommand("situps",      "Log sit-ups"),
@@ -151,7 +152,7 @@ def build_application() -> Application:
         cmd_sleep, cmd_energy, cmd_water, cmd_workout,
         cmd_myreport, cmd_leaderboard,
     )
-    from handlers.photo import handle_photo
+    from handlers.photo import handle_photo, cmd_meal
     from handlers.instructor import (
         cmd_stats, cmd_report, cmd_week, cmd_meals,
         cmd_schedule, cmd_scheduleweekly, cmd_stopweekly, cmd_checkinstatus, cmd_clearschedule,
@@ -177,6 +178,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("stepsavg",    cmd_steps_avg))
     app.add_handler(CommandHandler("myreport",    cmd_myreport))
     app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
+    app.add_handler(CommandHandler("meal",        cmd_meal))
 
     # Instructor commands
     app.add_handler(CommandHandler("stats",          cmd_stats))
