@@ -38,7 +38,7 @@ async def _ensure_registered(update: Update) -> dict:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await _ensure_registered(update)
     name = formatter.escape(user["name"])
-    msg = (
+   ''' msg = (
         f"👋 Hey *{name}*\\! Welcome to *Jazli's Macro Agent* 🏋️\n\n"
         "I help track meals, workouts, weight, sleep, steps & more\\.\n\n"
         "*Daily logging:*\n"
@@ -64,6 +64,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "`/maxpushups` `/maxsitups` `/pb24`\n\n"
         "*Weekly check\\-in:*\n"
         "`/checkin` — body photos \\+ weekly scores\n\n"
+        "📸 Send any food photo for AI meal analysis\\!"
+    ) '''
+    msg = ( 
+        f"👋 Hey *{name}*\\! Welcome to *MakanLens* 🥗\n\n"
+        "I help track your meals by breaking down their macros just from looking at your photos!\\.\n\n"
         "📸 Send any food photo for AI meal analysis\\!"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
