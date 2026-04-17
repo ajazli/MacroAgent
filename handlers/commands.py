@@ -38,34 +38,7 @@ async def _ensure_registered(update: Update) -> dict:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await _ensure_registered(update)
     name = formatter.escape(user["name"])
-   ''' msg = (
-        f"👋 Hey *{name}*\\! Welcome to *Jazli's Macro Agent* 🏋️\n\n"
-        "I help track meals, workouts, weight, sleep, steps & more\\.\n\n"
-        "*Daily logging:*\n"
-        "`/weight 74\\.2` — log weight\n"
-        "`/steps 8500` — log steps \\(auto\\-logged via iOS Shortcut\\)\n"
-        "`/sleep 7\\.5` — log sleep hours\n"
-        "`/energy 8` — log energy level \\(1–10\\)\n"
-        "`/water 500` — log water \\(ml\\)\n"
-        "`/workout chest day 45min` — free\\-form workout note\n\n"
-        "*Stats & reports:*\n"
-        "`/today` — today's summary\n"
-        "`/myreport` — your 7\\-day report\n"
-        "`/weightgraph` — weight chart \\(7 days\\)\n"
-        "`/weightavg` — weight average & trend\n"
-        "`/stepsgraph` — steps chart \\(7 days\\)\n"
-        "`/stepsavg` — steps average & trend\n"
-        "`/leaderboard` — weekly group rankings\n\n"
-        "*Tracked exercises:*\n"
-        "`/pushups` `/situps` `/planks` — reps × sets\n"
-        "`/run` `/jog` — distance → timing\n"
-        "`/cancel` — cancel current entry\n\n"
-        "*Personal bests:*\n"
-        "`/maxpushups` `/maxsitups` `/pb24`\n\n"
-        "*Weekly check\\-in:*\n"
-        "`/checkin` — body photos \\+ weekly scores\n\n"
-        "📸 Send any food photo for AI meal analysis\\!"
-    ) '''
+   
     msg = ( 
         f"👋 Hey *{name}*\\! Welcome to *MakanLens* 🥗\n\n"
         "I help track your meals by breaking down their macros just from looking at your photos!\\.\n\n"
