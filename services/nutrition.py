@@ -80,11 +80,16 @@ async def analyse_meal_photo(image_bytes: bytes, media_type: str = "image/jpeg")
 
 CORRECTION_PROMPT = (
     "You are a nutrition data assistant. The user is correcting an inaccurate meal analysis. "
-    "Given the original nutrition JSON and the user's correction text, return ONLY a valid JSON object "
-    "with the corrected values merged in. Keep any fields the user did not mention unchanged. "
+    "Given the original nutrition JSON and the user's correction text, decide which type of correction it is:\n\n"
+    "1. FOOD IDENTITY correction (e.g. 'it's satay not rendang', 'actually this is nasi lemak', "
+    "'wrong — it's chicken rice'): Re-estimate ALL nutrition values from scratch for the correct food. "
+    "Use the original portion/serving size as a reference if the user didn't specify a new one. "
+    "Update the description to reflect the correct food.\n\n"
+    "2. VALUE correction (e.g. 'calories should be 350', 'protein 28g', 'add 50 calories'): "
+    "Apply only the specific values the user mentioned; keep all other fields unchanged.\n\n"
+    "Return ONLY a valid JSON object with no extra text. "
     'Schema: { "description": string, "calories": number, "protein_g": number, "carbs_g": number, '
-    '"fat_g": number, "fiber_g": number, "confidence": "low"|"medium"|"high", "notes": string }. '
-    "Return only the JSON, no extra text."
+    '"fat_g": number, "fiber_g": number, "confidence": "low"|"medium"|"high", "notes": string }.'
 )
 
 

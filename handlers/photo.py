@@ -236,7 +236,11 @@ async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_T
     corrected_raw = await nutrition.parse_correction(original_data, correction_text)
     if corrected_raw is None:
         await processing.edit_text(
-            formatter.escape("⚠️ Could not parse the correction. Please be more specific, e.g. \"calories: 350, protein: 28g\"."),
+            formatter.escape(
+                "⚠️ Could not parse the correction. Try:\n"
+                "• Food identity: \"it's satay, not rendang\"\n"
+                "• Specific values: \"calories: 350, protein: 28g\""
+            ),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
