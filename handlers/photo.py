@@ -8,7 +8,9 @@ Triggered two ways:
 
 Corrections:
   Reply to the bot's meal analysis message with the corrected values
-  (e.g. "actually 350 calories and 28g protein") and the bot will update the log.
+  (e.g. "actually satay not rendang" or "350 calories, 28g protein") and the bot
+  will update the log. The bot identifies its own analysis messages via a DB mapping,
+  so no text matching is needed.
 """
 
 import logging
@@ -27,8 +29,6 @@ ANALYSIS_ERROR_MSG = (
     "⚠️ Could not analyse this meal\\. "
     "Try `/meal` with a clearer photo or log manually with `/log meal`\\."
 )
-
-_MEAL_ANALYSIS_MARKER = "🍽️ Meal logged"
 
 
 def _is_meal_photo(update: Update) -> bool:
@@ -117,12 +117,15 @@ async def _run_meal_analysis(
         )
         return
 
-    reply_text = formatter.format_meal_analysis(meal_data)
-    result_msg = await processing_msg.edit_text(reply_text, parse_mode=ParseMode.MARKDOWN_V2)
+    await processing_msg.edit_text(
+        formatter.format_meal_analysis(meal_data),
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
 
-    # Store the message→log mapping so users can reply to correct the analysis
+    # Store the message→log mapping so users can reply to correct the analysis.
+    # We use processing_msg's ID because edit_text keeps the same message_id.
     try:
-        await db.save_log_message(log_row["id"], result_msg.chat.id, result_msg.message_id)
+        await db.save_log_message(log_row["id"], processing_msg.chat_id, processing_msg.message_id)
     except Exception:
         logger.warning("Could not save log_message mapping for log %s", log_row["id"])
 
@@ -197,36 +200,28 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handles a text reply to one of the bot's meal analysis messages.
-    Parses the correction with Claude and updates the stored log entry.
+
+    Identification: instead of fragile text matching, we look up the replied-to
+    message ID in the log_messages table. If a mapping exists, it's a meal analysis
+    and we proceed with the correction.
     """
     message = update.effective_message
 
-    # Must be a text reply to the bot's own message
     if not message.reply_to_message:
         return
-    if message.reply_to_message.from_user is None:
-        return
-    if message.reply_to_message.from_user.id != context.bot.id:
-        return
 
-    # Must be replying to a meal analysis (identified by the marker line)
-    replied_text = message.reply_to_message.text or ""
-    if _MEAL_ANALYSIS_MARKER not in replied_text:
-        return
-
-    chat_id    = message.chat.id
+    chat_id    = message.chat_id
     replied_id = message.reply_to_message.message_id
 
     log_row = await db.get_log_by_message(chat_id, replied_id)
     if log_row is None:
-        await message.reply_text(
-            formatter.escape("⚠️ Could not find the original meal log to update."),
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
+        return  # Not a meal analysis message — silently ignore
+
+    correction_text = (message.text or "").strip()
+    if not correction_text:
         return
 
-    correction_text = message.text or ""
-    original_data   = log_row["data"] if isinstance(log_row["data"], dict) else {}
+    original_data = log_row["data"] if isinstance(log_row["data"], dict) else {}
 
     processing = await message.reply_text(
         formatter.escape("✏️ Applying correction…"),
@@ -256,15 +251,7 @@ async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    reply = formatter.format_meal_analysis(corrected_data)
     await processing.edit_text(
-        reply + "\n\n✏️ _Updated_",
+        formatter.format_meal_analysis(corrected_data) + "\n\n✏️ _Updated_",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
-
-    # Update the message→log mapping to point to the same log (mapping unchanged, but
-    # save again in case the original mapping was for a different message)
-    try:
-        await db.save_log_message(log_row["id"], chat_id, replied_id)
-    except Exception:
-        pass
