@@ -68,6 +68,8 @@ async def _post_init(application: Application) -> None:
         BotCommand("stepsavg",    "Steps average & stats"),
         BotCommand("leaderboard", "Weekly group rankings"),
         BotCommand("meal",        "Analyse a meal photo (send photo with /meal or reply to one)"),
+        BotCommand("dailymeals",  "Today's meals with macro breakdown"),
+        BotCommand("weeklymeals", "Past 7 days of meals with totals"),
         BotCommand("checkin",     "Start your weekly check-in"),
         BotCommand("pushups",     "Log push-ups"),
         BotCommand("situps",      "Log sit-ups"),
@@ -151,8 +153,9 @@ def build_application() -> Application:
         cmd_steps, cmd_steps_graph, cmd_steps_avg,
         cmd_sleep, cmd_energy, cmd_water, cmd_workout,
         cmd_myreport, cmd_leaderboard,
+        cmd_dailymeals, cmd_weeklymeals,
     )
-    from handlers.photo import handle_photo, cmd_meal
+    from handlers.photo import handle_photo, cmd_meal, handle_meal_correction
     from handlers.instructor import (
         cmd_stats, cmd_report, cmd_week, cmd_meals,
         cmd_schedule, cmd_scheduleweekly, cmd_stopweekly, cmd_checkinstatus, cmd_clearschedule,
@@ -177,8 +180,10 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("stepsgraph",  cmd_steps_graph))
     app.add_handler(CommandHandler("stepsavg",    cmd_steps_avg))
     app.add_handler(CommandHandler("myreport",    cmd_myreport))
-    app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
-    app.add_handler(CommandHandler("meal",        cmd_meal))
+    app.add_handler(CommandHandler("leaderboard",  cmd_leaderboard))
+    app.add_handler(CommandHandler("meal",         cmd_meal))
+    app.add_handler(CommandHandler("dailymeals",   cmd_dailymeals))
+    app.add_handler(CommandHandler("weeklymeals",  cmd_weeklymeals))
 
     # Instructor commands
     app.add_handler(CommandHandler("stats",          cmd_stats))
@@ -199,6 +204,9 @@ def build_application() -> Application:
     # Group -1 ensures this runs on every group update before command handlers.
     app.add_handler(ChatMemberHandler(_on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.ChatType.GROUPS, _on_group_message), group=-1)
+
+    # Correction handler — text replies to the bot's meal analysis messages
+    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, handle_meal_correction))
 
     # Photo handler — catches all photos in private chats and groups
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))

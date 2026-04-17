@@ -580,6 +580,51 @@ async def get_all_weekly_schedules() -> list[dict]:
         return []
 
 
+async def save_log_message(log_id: int, chat_id: int, message_id: int) -> None:
+    """Record which Telegram message corresponds to a log entry (for corrections)."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO log_messages (log_id, chat_id, message_id) VALUES ($1, $2, $3) "
+                "ON CONFLICT (chat_id, message_id) DO UPDATE SET log_id = EXCLUDED.log_id",
+                log_id, chat_id, message_id,
+            )
+    except Exception:
+        logger.exception("save_log_message failed for log_id=%s", log_id)
+
+
+async def get_log_by_message(chat_id: int, message_id: int) -> Optional[dict]:
+    """Return the log row linked to a specific bot message, or None."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT l.id, l.user_id, l.date, l.type, l.data, l.created_at "
+                "FROM log_messages lm JOIN logs l ON l.id = lm.log_id "
+                "WHERE lm.chat_id = $1 AND lm.message_id = $2",
+                chat_id, message_id,
+            )
+            return dict(row) if row else None
+    except Exception:
+        logger.exception("get_log_by_message failed for chat_id=%s msg=%s", chat_id, message_id)
+        return None
+
+
+async def update_log_data(log_id: int, data: dict) -> None:
+    """Replace the JSONB data payload of an existing log entry."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE logs SET data = $1::jsonb WHERE id = $2",
+                json.dumps(data), log_id,
+            )
+    except Exception:
+        logger.exception("update_log_data failed for log_id=%s", log_id)
+        raise
+
+
 async def get_all_users_logs_date_range(start: date, end: date) -> list[dict]:
     """Return all logs for all users in date range joined with user info."""
     pool = get_pool()

@@ -5,6 +5,10 @@ Triggered two ways:
   1. Auto: user sends any photo (private chat) or a photo with a meal keyword caption (groups)
   2. Command: /meal — send a photo with /meal as caption, or reply to a photo with /meal
      Works in groups even when bot privacy mode is enabled, since commands are always received.
+
+Corrections:
+  Reply to the bot's meal analysis message with the corrected values
+  (e.g. "actually 350 calories and 28g protein") and the bot will update the log.
 """
 
 import logging
@@ -24,6 +28,8 @@ ANALYSIS_ERROR_MSG = (
     "Try `/meal` with a clearer photo or log manually with `/log meal`\\."
 )
 
+_MEAL_ANALYSIS_MARKER = "🍽️ *Meal logged*"
+
 
 def _is_meal_photo(update: Update) -> bool:
     """Return True if the photo should trigger auto-analysis.
@@ -40,10 +46,8 @@ def _is_meal_photo(update: Update) -> bool:
     caption = (msg.caption or "").strip().lower()
 
     if chat and chat.type in ("group", "supergroup"):
-        # In groups, require an explicit meal keyword so random photos are ignored
         return any(kw in caption for kw in _MEAL_KEYWORDS)
 
-    # Private chat: no caption → treat as meal; meal keyword → treat as meal
     if not caption:
         return True
     return any(kw in caption for kw in _MEAL_KEYWORDS)
@@ -104,7 +108,7 @@ async def _run_meal_analysis(
 
     try:
         meal_data = nutrition.normalise_nutrition(raw_result)
-        await db.insert_log(user["id"], "meal", meal_data)
+        log_row = await db.insert_log(user["id"], "meal", meal_data)
     except Exception:
         logger.exception("Failed to save meal log for user %s", tg_user.id)
         await processing_msg.edit_text(
@@ -113,8 +117,14 @@ async def _run_meal_analysis(
         )
         return
 
-    reply = formatter.format_meal_analysis(meal_data)
-    await processing_msg.edit_text(reply, parse_mode=ParseMode.MARKDOWN_V2)
+    reply_text = formatter.format_meal_analysis(meal_data)
+    result_msg = await processing_msg.edit_text(reply_text, parse_mode=ParseMode.MARKDOWN_V2)
+
+    # Store the message→log mapping so users can reply to correct the analysis
+    try:
+        await db.save_log_message(log_row["id"], result_msg.chat.id, result_msg.message_id)
+    except Exception:
+        logger.warning("Could not save log_message mapping for log %s", log_row["id"])
 
 
 async def _resolve_user(tg_user, message):
@@ -160,7 +170,6 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     tg_user = update.effective_user
 
-    # Determine which message holds the photo
     photo_message = None
     if message.photo:
         photo_message = message
@@ -183,3 +192,75 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await _run_meal_analysis(photo_message, message, user, tg_user, context)
+
+
+async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles a text reply to one of the bot's meal analysis messages.
+    Parses the correction with Claude and updates the stored log entry.
+    """
+    message = update.effective_message
+
+    # Must be a text reply to the bot's own message
+    if not message.reply_to_message:
+        return
+    if message.reply_to_message.from_user is None:
+        return
+    if message.reply_to_message.from_user.id != context.bot.id:
+        return
+
+    # Must be replying to a meal analysis (identified by the marker line)
+    replied_text = message.reply_to_message.text or ""
+    if _MEAL_ANALYSIS_MARKER not in replied_text:
+        return
+
+    chat_id    = message.chat.id
+    replied_id = message.reply_to_message.message_id
+
+    log_row = await db.get_log_by_message(chat_id, replied_id)
+    if log_row is None:
+        await message.reply_text(
+            formatter.escape("⚠️ Could not find the original meal log to update."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    correction_text = message.text or ""
+    original_data   = log_row["data"] if isinstance(log_row["data"], dict) else {}
+
+    processing = await message.reply_text(
+        formatter.escape("✏️ Applying correction…"),
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+    corrected_raw = await nutrition.parse_correction(original_data, correction_text)
+    if corrected_raw is None:
+        await processing.edit_text(
+            formatter.escape("⚠️ Could not parse the correction. Please be more specific, e.g. \"calories: 350, protein: 28g\"."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    try:
+        corrected_data = nutrition.normalise_nutrition(corrected_raw)
+        await db.update_log_data(log_row["id"], corrected_data)
+    except Exception:
+        logger.exception("Failed to update meal log %s", log_row["id"])
+        await processing.edit_text(
+            formatter.escape("⚠️ Correction parsed but could not be saved. Please try again."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    reply = formatter.format_meal_analysis(corrected_data)
+    await processing.edit_text(
+        reply + "\n\n✏️ _Updated_",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+    # Update the message→log mapping to point to the same log (mapping unchanged, but
+    # save again in case the original mapping was for a different message)
+    try:
+        await db.save_log_message(log_row["id"], chat_id, replied_id)
+    except Exception:
+        pass

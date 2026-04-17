@@ -585,6 +585,129 @@ def format_leaderboard(entries: list, days: int = 7) -> str:
 # /checkinstatus formatter
 # ---------------------------------------------------------------------------
 
+def format_daily_meals(user_name: str, meal_logs: list) -> str:
+    """Per-meal breakdown for today with running totals at the bottom."""
+    name_esc  = escape(user_name)
+    today_str = escape(today_sgt().strftime("%d %b %Y"))
+
+    if not meal_logs:
+        return (
+            f"🍽️ *Today's Meals — {name_esc}* \\({today_str}\\)\n\n"
+            f"_{escape('No meals logged today.')}_"
+        )
+
+    total_cal = total_protein = total_carbs = total_fat = 0.0
+
+    lines = [f"🍽️ *Today's Meals — {name_esc}* \\({today_str}\\)", ""]
+    for i, row in enumerate(meal_logs, 1):
+        data    = row["data"] if isinstance(row["data"], dict) else {}
+        desc    = escape(data.get("description", "Unknown"))
+        cal     = int(data.get("calories", 0))
+        protein = float(data.get("protein", 0))
+        carbs   = float(data.get("carbs", 0))
+        fat     = float(data.get("fat", 0))
+        total_cal     += cal
+        total_protein += protein
+        total_carbs   += carbs
+        total_fat     += fat
+        lines.append(f"*{escape(str(i))}\\.* {desc}")
+        lines.append(
+            f"   {escape(str(cal))} kcal \\| "
+            f"💪 {escape(str(round(protein, 1)))}g \\| "
+            f"🥗 {escape(str(round(carbs, 1)))}g \\| "
+            f"🧈 {escape(str(round(fat, 1)))}g"
+        )
+        lines.append("")
+
+    lines += [
+        escape("━━━━━━━━━━━━━━━"),
+        f"📊 *Total:* {escape(str(int(total_cal)))} kcal",
+        f"💪 {escape(str(round(total_protein, 1)))}g protein \\| "
+        f"🥗 {escape(str(round(total_carbs, 1)))}g carbs \\| "
+        f"🧈 {escape(str(round(total_fat, 1)))}g fat",
+    ]
+    return "\n".join(lines)
+
+
+def format_weekly_meals(user_name: str, meal_logs: list) -> str:
+    """Day-by-day meal overview for the past 7 days with per-day and weekly totals."""
+    import json as _json
+    today = today_sgt()
+    dates = [today - timedelta(days=i) for i in range(6, -1, -1)]
+
+    by_date: dict[date, list] = {d: [] for d in dates}
+    for row in meal_logs:
+        d = row["date"]
+        if isinstance(d, date) and d in by_date:
+            by_date[d].append(row)
+
+    name_esc  = escape(user_name)
+    start_str = escape(dates[0].strftime("%d %b"))
+    end_str   = escape(dates[-1].strftime("%d %b %Y"))
+
+    lines = [f"📅 *Weekly Meals — {name_esc}*", f"_{start_str} – {end_str}_", ""]
+
+    week_cal = week_protein = week_carbs = week_fat = 0.0
+    days_with_data = 0
+
+    for d in dates:
+        rows = by_date[d]
+        day_str = escape(d.strftime("%a %d %b"))
+        lines.append(f"📆 *{day_str}*")
+
+        if not rows:
+            lines.append(f"_{escape('No meals logged')}_")
+            lines.append("")
+            continue
+
+        days_with_data += 1
+        day_cal = day_protein = day_carbs = day_fat = 0.0
+
+        for i, row in enumerate(rows, 1):
+            data    = row["data"] if isinstance(row["data"], dict) else {}
+            desc    = escape(data.get("description", "Unknown"))
+            cal     = int(data.get("calories", 0))
+            protein = float(data.get("protein", 0))
+            carbs   = float(data.get("carbs", 0))
+            fat     = float(data.get("fat", 0))
+            day_cal     += cal
+            day_protein += protein
+            day_carbs   += carbs
+            day_fat     += fat
+            lines.append(
+                f"{escape(str(i))}\\. {desc} — "
+                f"{escape(str(cal))} kcal"
+            )
+
+        week_cal     += day_cal
+        week_protein += day_protein
+        week_carbs   += day_carbs
+        week_fat     += day_fat
+
+        lines.append(
+            f"   _{escape(str(int(day_cal)))} kcal \\| "
+            f"💪 {escape(str(round(day_protein, 1)))}g \\| "
+            f"🥗 {escape(str(round(day_carbs, 1)))}g \\| "
+            f"🧈 {escape(str(round(day_fat, 1)))}g_"
+        )
+        lines.append("")
+
+    avg_cal     = round(week_cal     / days_with_data, 0) if days_with_data else 0
+    avg_protein = round(week_protein / days_with_data, 1) if days_with_data else 0
+    avg_carbs   = round(week_carbs   / days_with_data, 1) if days_with_data else 0
+    avg_fat     = round(week_fat     / days_with_data, 1) if days_with_data else 0
+
+    lines += [
+        escape("━━━━━━━━━━━━━━━"),
+        f"📊 *7\\-Day Total:* {escape(str(int(week_cal)))} kcal",
+        f"📈 *Daily Avg:* {escape(str(int(avg_cal)))} kcal \\| "
+        f"💪 {escape(str(avg_protein))}g \\| "
+        f"🥗 {escape(str(avg_carbs))}g \\| "
+        f"🧈 {escape(str(avg_fat))}g",
+    ]
+    return "\n".join(lines)
+
+
 def format_check_in_status(schedules: list) -> str:
     if not schedules:
         return escape("No check-in schedules found.")

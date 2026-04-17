@@ -4,12 +4,14 @@ User-facing command handlers.
 
 import io
 import logging
+from datetime import timedelta
 
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from services import db, formatter
+from services.tz import today_sgt
 
 logger = logging.getLogger(__name__)
 
@@ -515,5 +517,43 @@ async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.exception("Error in cmd_leaderboard")
         await update.message.reply_text(
             formatter.escape("⚠️ Could not load leaderboard. Please try again."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+
+
+# ---------------------------------------------------------------------------
+# /dailymeals — today's meals with per-meal breakdown and totals
+# ---------------------------------------------------------------------------
+
+async def cmd_dailymeals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        user = await _ensure_registered(update)
+        meal_logs = await db.get_logs_for_user_today(user["id"], log_type="meal")
+        reply = formatter.format_daily_meals(user["name"], meal_logs)
+        await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN_V2)
+    except Exception:
+        logger.exception("Error in cmd_dailymeals for telegram_id=%s", update.effective_user.id)
+        await update.message.reply_text(
+            formatter.escape("⚠️ Could not load today's meals. Please try again."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+
+
+# ---------------------------------------------------------------------------
+# /weeklymeals — past 7 days of meals with per-day and weekly totals
+# ---------------------------------------------------------------------------
+
+async def cmd_weeklymeals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        user = await _ensure_registered(update)
+        today = today_sgt()
+        start = today - timedelta(days=6)
+        meal_logs = await db.get_logs_for_user_date_range(user["id"], start, today, log_type="meal")
+        reply = formatter.format_weekly_meals(user["name"], meal_logs)
+        await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN_V2)
+    except Exception:
+        logger.exception("Error in cmd_weeklymeals for telegram_id=%s", update.effective_user.id)
+        await update.message.reply_text(
+            formatter.escape("⚠️ Could not load weekly meals. Please try again."),
             parse_mode=ParseMode.MARKDOWN_V2,
         )

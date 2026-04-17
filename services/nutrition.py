@@ -78,6 +78,48 @@ async def analyse_meal_photo(image_bytes: bytes, media_type: str = "image/jpeg")
     return data
 
 
+CORRECTION_PROMPT = (
+    "You are a nutrition data assistant. The user is correcting an inaccurate meal analysis. "
+    "Given the original nutrition JSON and the user's correction text, return ONLY a valid JSON object "
+    "with the corrected values merged in. Keep any fields the user did not mention unchanged. "
+    'Schema: { "description": string, "calories": number, "protein_g": number, "carbs_g": number, '
+    '"fat_g": number, "fiber_g": number, "confidence": "low"|"medium"|"high", "notes": string }. '
+    "Return only the JSON, no extra text."
+)
+
+
+async def parse_correction(original: dict, correction_text: str) -> Optional[dict]:
+    """Use Claude to apply a freeform correction to an existing nutrition dict."""
+    client = _get_client()
+    prompt = (
+        f"Original analysis:\n{json.dumps(original)}\n\n"
+        f"User correction: {correction_text}\n\n"
+        "Return the corrected JSON."
+    )
+    try:
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=512,
+            system=CORRECTION_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception as exc:
+        logger.error("Claude API error during correction parsing: %s", exc)
+        return None
+
+    raw_text = response.content[0].text.strip()
+    if raw_text.startswith("```"):
+        raw_text = "\n".join(
+            line for line in raw_text.splitlines() if not line.startswith("```")
+        ).strip()
+
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        logger.error("Claude returned non-JSON for correction: %r", raw_text)
+        return None
+
+
 def normalise_nutrition(raw: dict) -> dict:
     return {
         "description": raw.get("description", "Unknown meal"),
