@@ -38,7 +38,6 @@ async def _ensure_registered(update: Update) -> dict:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await _ensure_registered(update)
     name = formatter.escape(user["name"])
-   
     msg = ( 
         f"👋 Hey *{name}*\\! Welcome to *MakanLens* 🥗\n\n"
         "I help track your meals by breaking down their macros just from looking at your photos!\\.\n\n"
