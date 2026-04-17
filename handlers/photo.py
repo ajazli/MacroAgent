@@ -28,7 +28,7 @@ ANALYSIS_ERROR_MSG = (
     "Try `/meal` with a clearer photo or log manually with `/log meal`\\."
 )
 
-_MEAL_ANALYSIS_MARKER = "🍽️ *Meal logged*"
+_MEAL_ANALYSIS_MARKER = "🍽️ Meal logged"
 
 
 def _is_meal_photo(update: Update) -> bool:
