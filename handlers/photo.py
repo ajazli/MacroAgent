@@ -34,20 +34,16 @@ ANALYSIS_ERROR_MSG = (
 def _is_meal_photo(update: Update) -> bool:
     """Return True if the photo should trigger auto-analysis.
 
-    Private chats: any photo (no caption = meal).
-    Group chats: only if caption contains a meal keyword (avoids analysing
-    every meme/photo sent in the group).
+    Any photo without a caption is treated as a meal.
+    Any photo whose caption contains a meal keyword is treated as a meal.
+    Any photo with a non-meal caption is ignored.
+    Behaviour is identical in private chats and groups.
     """
     msg = update.effective_message
     if not msg.photo:
         return False
 
-    chat = update.effective_chat
     caption = (msg.caption or "").strip().lower()
-
-    if chat and chat.type in ("group", "supergroup"):
-        return any(kw in caption for kw in _MEAL_KEYWORDS)
-
     if not caption:
         return True
     return any(kw in caption for kw in _MEAL_KEYWORDS)
