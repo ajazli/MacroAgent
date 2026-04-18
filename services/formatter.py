@@ -27,6 +27,23 @@ def escape(text: str) -> str:
     return "".join(result)
 
 
+def _row_data(row: dict) -> dict:
+    """Extract the JSONB data field from a log row as a plain dict.
+
+    asyncpg normally decodes JSONB to dict, but can return a raw JSON string
+    in some connection states. This mirrors the same fallback used in
+    _aggregate_today so all formatters behave consistently.
+    """
+    import json as _json
+    raw = row.get("data", {})
+    if isinstance(raw, str):
+        try:
+            raw = _json.loads(raw)
+        except Exception:
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -489,7 +506,7 @@ def format_meals_today(user_name: str, meal_logs: list) -> str:
 
     lines = [f"🍽️ *Meals — {name_esc}* \\({today_str}\\)", ""]
     for i, row in enumerate(meal_logs, 1):
-        data    = row["data"] if isinstance(row["data"], dict) else {}
+        data    = _row_data(row)
         desc    = escape(data.get("description", "Unknown"))
         cal     = escape(str(data.get("calories", 0)))
         protein = escape(str(data.get("protein", 0)))
@@ -600,7 +617,7 @@ def format_daily_meals(user_name: str, meal_logs: list) -> str:
 
     lines = [f"🍽️ *Today's Meals — {name_esc}* \\({today_str}\\)", ""]
     for i, row in enumerate(meal_logs, 1):
-        data    = row["data"] if isinstance(row["data"], dict) else {}
+        data    = _row_data(row)
         desc    = escape(data.get("description", "Unknown"))
         cal     = int(data.get("calories", 0))
         protein = float(data.get("protein", 0))
@@ -664,7 +681,7 @@ def format_weekly_meals(user_name: str, meal_logs: list) -> str:
         day_cal = day_protein = day_carbs = day_fat = 0.0
 
         for i, row in enumerate(rows, 1):
-            data    = row["data"] if isinstance(row["data"], dict) else {}
+            data    = _row_data(row)
             desc    = escape(data.get("description", "Unknown"))
             cal     = int(data.get("calories", 0))
             protein = float(data.get("protein", 0))
