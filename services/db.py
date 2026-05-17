@@ -626,14 +626,17 @@ async def update_log_data(log_id: int, data: dict) -> None:
 
 
 async def get_all_users_meals_today() -> list[dict]:
-    """Return all meal logs for today (SGT) joined with user info, ordered by user then time."""
+    """Return today's meal logs joined with user info and the chat_id they were logged in."""
     pool = get_pool()
     today = today_sgt()
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT l.id, l.user_id, u.name, u.telegram_id, l.date, l.type, l.data, l.created_at "
-                "FROM logs l JOIN users u ON u.id = l.user_id "
+                "SELECT l.id, l.user_id, u.name, u.telegram_id, l.date, l.type, l.data, "
+                "       l.created_at, lm.chat_id "
+                "FROM logs l "
+                "JOIN users u ON u.id = l.user_id "
+                "JOIN log_messages lm ON lm.log_id = l.id "
                 "WHERE l.date = $1 AND l.type = 'meal' "
                 "ORDER BY u.name, l.created_at",
                 today,

@@ -64,22 +64,22 @@ def _escape(text: str) -> str:
 
 
 async def daily_nutrition_summary(bot) -> None:
-    """11pm SGT — send per-user meal summary (breakfast/lunch/snack/dinner/total) to all groups."""
+    """11pm SGT — send each group only the meals logged in that group's chat."""
     from services.db import get_all_users_meals_today
     from services import formatter
 
     try:
-        rows = await get_all_users_meals_today()
+        all_rows = await get_all_users_meals_today()
     except Exception as exc:
         logger.error("Failed to fetch meals for nutrition summary: %s", exc)
         return
 
-    if not rows:
-        return
-
-    text = formatter.format_daily_nutrition_summary(rows)
-
     for chat_id, clocker_topic_id in await _get_groups_with_topics(bot):
+        group_rows = [r for r in all_rows if r.get("chat_id") == chat_id]
+        if not group_rows:
+            continue
+
+        text = formatter.format_daily_nutrition_summary(group_rows)
         kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2"}
         if clocker_topic_id:
             kwargs["message_thread_id"] = clocker_topic_id
