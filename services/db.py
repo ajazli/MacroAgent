@@ -625,6 +625,25 @@ async def update_log_data(log_id: int, data: dict) -> None:
         raise
 
 
+async def get_all_users_meals_today() -> list[dict]:
+    """Return all meal logs for today (SGT) joined with user info, ordered by user then time."""
+    pool = get_pool()
+    today = today_sgt()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT l.id, l.user_id, u.name, u.telegram_id, l.date, l.type, l.data, l.created_at "
+                "FROM logs l JOIN users u ON u.id = l.user_id "
+                "WHERE l.date = $1 AND l.type = 'meal' "
+                "ORDER BY u.name, l.created_at",
+                today,
+            )
+            return [dict(r) for r in rows]
+    except Exception:
+        logger.exception("get_all_users_meals_today failed")
+        return []
+
+
 async def get_all_users_logs_date_range(start: date, end: date) -> list[dict]:
     """Return all logs for all users in date range joined with user info."""
     pool = get_pool()

@@ -725,6 +725,85 @@ def format_weekly_meals(user_name: str, meal_logs: list) -> str:
     return "\n".join(lines)
 
 
+def format_daily_nutrition_summary(meal_rows: list) -> str:
+    """11pm group summary: each user's meals split by time-of-day category + daily total."""
+    from datetime import timezone, timedelta
+    import json as _json
+
+    SGT = timezone(timedelta(hours=8))
+
+    _CAT_ORDER  = ["Breakfast", "Lunch", "Snack", "Dinner", "Other"]
+    _CAT_EMOJI  = {"Breakfast": "🌅", "Lunch": "☀️", "Snack": "🍎", "Dinner": "🌙", "Other": "🕐"}
+
+    def _hour_to_cat(created_at) -> str:
+        try:
+            hour = created_at.astimezone(SGT).hour
+        except Exception:
+            return "Other"
+        if 6  <= hour < 11: return "Breakfast"
+        if 11 <= hour < 15: return "Lunch"
+        if 15 <= hour < 18: return "Snack"
+        if 18 <= hour < 23: return "Dinner"
+        return "Other"
+
+    if not meal_rows:
+        return escape("No meals logged today.")
+
+    # Group rows by user
+    by_user: dict = {}
+    for row in meal_rows:
+        name = row["name"]
+        by_user.setdefault(name, []).append(row)
+
+    today_str = escape(today_sgt().strftime("%d %b %Y"))
+    lines = [f"📊 *Daily Nutrition Summary*", f"_{today_str}_", ""]
+
+    for name in sorted(by_user):
+        name_esc = escape(name)
+        lines.append(f"👤 *{name_esc}*")
+
+        cats: dict = {c: [] for c in _CAT_ORDER}
+        for row in by_user[name]:
+            cats[_hour_to_cat(row["created_at"])].append(row)
+
+        total_cal = total_pro = total_carbs = total_fat = 0.0
+
+        for cat in _CAT_ORDER:
+            rows_in = cats[cat]
+            if not rows_in:
+                continue
+            cal = pro = carbs = fat = 0.0
+            descs = []
+            for row in rows_in:
+                d = _row_data(row)
+                cal   += int(d.get("calories", 0))
+                pro   += float(d.get("protein", 0))
+                carbs += float(d.get("carbs", 0))
+                fat   += float(d.get("fat", 0))
+                descs.append(d.get("description", "Unknown"))
+            total_cal += cal; total_pro += pro
+            total_carbs += carbs; total_fat += fat
+            emoji    = _CAT_EMOJI[cat]
+            desc_str = escape(", ".join(descs))
+            lines.append(
+                f"{emoji} *{escape(cat)}:* {desc_str}\n"
+                f"   {escape(str(int(cal)))} kcal \\| "
+                f"💪 {escape(str(round(pro, 1)))}g \\| "
+                f"🥗 {escape(str(round(carbs, 1)))}g \\| "
+                f"🧈 {escape(str(round(fat, 1)))}g"
+            )
+
+        lines.append(
+            f"📊 *Total: {escape(str(int(total_cal)))} kcal* \\| "
+            f"💪 {escape(str(round(total_pro, 1)))}g \\| "
+            f"🥗 {escape(str(round(total_carbs, 1)))}g \\| "
+            f"🧈 {escape(str(round(total_fat, 1)))}g"
+        )
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
 def format_check_in_status(schedules: list) -> str:
     if not schedules:
         return escape("No check-in schedules found.")
