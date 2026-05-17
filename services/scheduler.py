@@ -63,6 +63,32 @@ def _escape(text: str) -> str:
     return "".join(f"\\{c}" if c in special else c for c in str(text))
 
 
+async def daily_nutrition_summary(bot) -> None:
+    """11pm SGT — send per-user meal summary (breakfast/lunch/snack/dinner/total) to all groups."""
+    from services.db import get_all_users_meals_today
+    from services import formatter
+
+    try:
+        rows = await get_all_users_meals_today()
+    except Exception as exc:
+        logger.error("Failed to fetch meals for nutrition summary: %s", exc)
+        return
+
+    if not rows:
+        return
+
+    text = formatter.format_daily_nutrition_summary(rows)
+
+    for chat_id, clocker_topic_id in await _get_groups_with_topics(bot):
+        kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2"}
+        if clocker_topic_id:
+            kwargs["message_thread_id"] = clocker_topic_id
+        try:
+            await bot.send_message(**kwargs)
+        except Exception as exc:
+            logger.error("Failed to send nutrition summary to %s: %s", chat_id, exc)
+
+
 async def daily_morning_prompt(bot) -> None:
     """8am SGT daily prompt for weight, sleep, energy, water — sent to all groups."""
     text = (
@@ -147,6 +173,13 @@ def start_scheduler(bot) -> AsyncIOScheduler:
         "cron", hour=10, minute=0,
         args=[bot],
         id="weekly_checkin_trigger",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        daily_nutrition_summary,
+        "cron", hour=23, minute=0,
+        args=[bot],
+        id="daily_nutrition_summary",
         replace_existing=True,
     )
 
