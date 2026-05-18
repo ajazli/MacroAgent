@@ -153,9 +153,9 @@ def build_application() -> Application:
         cmd_steps, cmd_steps_graph, cmd_steps_avg,
         cmd_sleep, cmd_energy, cmd_water, cmd_workout,
         cmd_myreport, cmd_leaderboard,
-        cmd_dailymeals, cmd_weeklymeals,
+        cmd_dailymeals, cmd_weeklymeals, cmd_testsummary,
     )
-    from handlers.photo import handle_photo, cmd_meal, handle_meal_correction
+    from handlers.photo import cmd_meal, handle_meal_correction
     from handlers.instructor import (
         cmd_stats, cmd_report, cmd_week, cmd_meals,
         cmd_schedule, cmd_scheduleweekly, cmd_stopweekly, cmd_checkinstatus, cmd_clearschedule,
@@ -184,6 +184,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("meal",         cmd_meal))
     app.add_handler(CommandHandler("dailymeals",   cmd_dailymeals))
     app.add_handler(CommandHandler("weeklymeals",  cmd_weeklymeals))
+    app.add_handler(CommandHandler("testsummary",  cmd_testsummary))
 
     # Instructor commands
     app.add_handler(CommandHandler("stats",          cmd_stats))
@@ -207,9 +208,6 @@ def build_application() -> Application:
 
     # Correction handler — text replies to the bot's meal analysis messages
     app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, handle_meal_correction))
-
-    # Photo handler — catches all photos in private chats and groups
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     return app
 

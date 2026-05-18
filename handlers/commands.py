@@ -557,3 +557,23 @@ async def cmd_weeklymeals(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             formatter.escape("⚠️ Could not load weekly meals. Please try again."),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
+
+
+# ---------------------------------------------------------------------------
+# /testsummary — manually trigger the 11pm daily nutrition summary (for testing)
+# ---------------------------------------------------------------------------
+
+async def cmd_testsummary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from services.scheduler import daily_nutrition_summary
+    await update.message.reply_text(
+        formatter.escape("📊 Triggering daily nutrition summary…"),
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    try:
+        await daily_nutrition_summary(context.bot)
+    except Exception:
+        logger.exception("Error in cmd_testsummary")
+        await update.message.reply_text(
+            formatter.escape("⚠️ Failed to send summary. Check logs."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
