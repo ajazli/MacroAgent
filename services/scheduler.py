@@ -177,7 +177,7 @@ def start_scheduler(bot) -> AsyncIOScheduler:
     )
     _scheduler.add_job(
         daily_nutrition_summary,
-        "cron", hour=23, minute=0,
+        "cron", hour=22, minute=0,
         args=[bot],
         id="daily_nutrition_summary",
         replace_existing=True,
