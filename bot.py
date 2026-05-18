@@ -209,6 +209,10 @@ def build_application() -> Application:
     # Correction handler — text replies to the bot's meal analysis messages
     app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, handle_meal_correction))
 
+    # PTB's CommandHandler does not match commands in photo captions, only in text.
+    # This handler catches photos sent with /meal as the caption.
+    app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r'^/meal'), cmd_meal))
+
     return app
 
 
