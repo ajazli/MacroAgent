@@ -155,7 +155,7 @@ def build_application() -> Application:
         cmd_myreport, cmd_leaderboard,
         cmd_dailymeals, cmd_weeklymeals, cmd_testsummary,
     )
-    from handlers.photo import cmd_meal, handle_meal_correction
+    from handlers.photo import handle_photo, cmd_meal, handle_meal_correction
     from handlers.instructor import (
         cmd_stats, cmd_report, cmd_week, cmd_meals,
         cmd_schedule, cmd_scheduleweekly, cmd_stopweekly, cmd_checkinstatus, cmd_clearschedule,
@@ -212,6 +212,9 @@ def build_application() -> Application:
     # PTB's CommandHandler does not match commands in photo captions, only in text.
     # This handler catches photos sent with /meal as the caption.
     app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r'^/meal'), cmd_meal))
+
+    # Auto-detection: silently analyse every photo; only reply if Claude identifies food.
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     return app
 
