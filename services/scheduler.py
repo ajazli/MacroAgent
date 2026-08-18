@@ -6,10 +6,13 @@ Supports multiple groups — no GROUP_CHAT_ID env var required.
 
 import logging
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 logger = logging.getLogger(__name__)
+
+_SGT = ZoneInfo("Asia/Singapore")
 
 _scheduler: Optional[AsyncIOScheduler] = None
 
@@ -64,19 +67,27 @@ def _escape(text: str) -> str:
 
 
 async def daily_nutrition_summary(bot) -> None:
-    """11pm SGT — send each group only the meals logged in that group's chat."""
+    """22:00 SGT — send each group only the meals logged in that group's chat."""
     from services.db import get_all_users_meals_today
     from services import formatter
+
+    logger.info("daily_nutrition_summary: job fired")
 
     try:
         all_rows = await get_all_users_meals_today()
     except Exception as exc:
-        logger.error("Failed to fetch meals for nutrition summary: %s", exc)
+        logger.error("daily_nutrition_summary: failed to fetch meals: %s", exc)
         return
 
-    for chat_id, clocker_topic_id in await _get_groups_with_topics(bot):
+    logger.info("daily_nutrition_summary: fetched %d meal rows", len(all_rows))
+
+    groups = await _get_groups_with_topics(bot)
+    logger.info("daily_nutrition_summary: sending to %d group(s)", len(groups))
+
+    for chat_id, clocker_topic_id in groups:
         group_rows = [r for r in all_rows if r.get("chat_id") == chat_id]
         if not group_rows:
+            logger.info("daily_nutrition_summary: no meals for chat %s — skipping", chat_id)
             continue
 
         text = formatter.format_daily_nutrition_summary(group_rows)
@@ -85,18 +96,19 @@ async def daily_nutrition_summary(bot) -> None:
             kwargs["message_thread_id"] = clocker_topic_id
         try:
             await bot.send_message(**kwargs)
+            logger.info("daily_nutrition_summary: sent to chat %s", chat_id)
         except Exception as exc:
-            logger.error("Failed to send nutrition summary to %s: %s", chat_id, exc)
+            logger.error("daily_nutrition_summary: failed to send to %s: %s", chat_id, exc)
 
 
 async def daily_morning_prompt(bot) -> None:
     """8am SGT daily prompt for weight, sleep, energy, water — sent to all groups."""
     text = (
-        "🌅 *Good morning\\!* Time to log your daily metrics:\n\n"
+        "\U0001f305 *Good morning\\!* Time to log your daily metrics:\n\n"
         "⚖️ `/weight` _e\\.g\\. /weight 74\\.2_\n"
-        "😴 `/sleep` _e\\.g\\. /sleep 7\\.5_\n"
+        "\U0001f634 `/sleep` _e\\.g\\. /sleep 7\\.5_\n"
         "⚡ `/energy` _e\\.g\\. /energy 8_\n"
-        "💧 `/water` _e\\.g\\. /water 500_"
+        "\U0001f4a7 `/water` _e\\.g\\. /water 500_"
     )
     for chat_id, clocker_topic_id in await _get_groups_with_topics(bot):
         kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2"}
@@ -139,7 +151,7 @@ async def weekly_checkin_trigger(bot) -> None:
         name = entry["name"]
         mention = _escape(f"@{name}" if not name.startswith("@") else name)
         text = (
-            f"📋 *Weekly Check\\-In Reminder*\n\n"
+            f"\U0001f4cb *Weekly Check\\-In Reminder*\n\n"
             f"Hey {mention}\\, it's your check\\-in day\\!\n"
             f"Use `/checkin` to complete your weekly assessment\\."
         )
@@ -159,7 +171,7 @@ async def weekly_checkin_trigger(bot) -> None:
 
 def start_scheduler(bot) -> AsyncIOScheduler:
     global _scheduler
-    _scheduler = AsyncIOScheduler(timezone="Asia/Singapore")
+    _scheduler = AsyncIOScheduler(timezone=_SGT)
 
     _scheduler.add_job(
         daily_morning_prompt,
