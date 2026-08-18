@@ -42,7 +42,7 @@ async def resolve_clocker_topic(bot, chat_id: int) -> Optional[int]:
         return None
     except Exception as exc:
         logger.warning("Could not resolve Clocker topic for %s: %s", chat_id, exc)
-        return _clocker_cache.get(chat_id)  # Return cached value if available
+        return _clocker_cache.get(chat_id)
 
 
 async def _get_groups_with_topics(bot) -> list[tuple[int, Optional[int]]]:
@@ -54,7 +54,6 @@ async def _get_groups_with_topics(bot) -> list[tuple[int, Optional[int]]]:
     for g in groups:
         chat_id = g["chat_id"]
         if chat_id not in _clocker_cache:
-            # Populate cache from DB first, then attempt live resolve
             _clocker_cache[chat_id] = g.get("clocker_topic_id")
             await resolve_clocker_topic(bot, chat_id)
         result.append((chat_id, _clocker_cache.get(chat_id)))
@@ -67,7 +66,12 @@ def _escape(text: str) -> str:
 
 
 async def daily_nutrition_summary(bot) -> None:
-    """22:00 SGT — send each group only the meals logged in that group's chat."""
+    """23:00 SGT — send each group only the meals logged in that group's chat.
+
+    Group isolation: meals are linked to a chat_id via the log_messages table
+    (populated when a meal photo is analysed). Only meals from each specific
+    group are included in that group's summary — no cross-group data leakage.
+    """
     from services.db import get_all_users_meals_today
     from services import formatter
 
@@ -85,6 +89,7 @@ async def daily_nutrition_summary(bot) -> None:
     logger.info("daily_nutrition_summary: sending to %d group(s)", len(groups))
 
     for chat_id, clocker_topic_id in groups:
+        # Strict per-group filter: only include meals logged in this specific chat
         group_rows = [r for r in all_rows if r.get("chat_id") == chat_id]
         if not group_rows:
             logger.info("daily_nutrition_summary: no meals for chat %s — skipping", chat_id)
@@ -131,7 +136,6 @@ async def weekly_checkin_trigger(bot) -> None:
 
     today = today_sgt()
 
-    # Auto-schedule next occurrence for all indefinite recurring users
     try:
         weekly = await get_all_weekly_schedules()
         for w in weekly:
@@ -189,7 +193,7 @@ def start_scheduler(bot) -> AsyncIOScheduler:
     )
     _scheduler.add_job(
         daily_nutrition_summary,
-        "cron", hour=22, minute=0,
+        "cron", hour=23, minute=0,
         args=[bot],
         id="daily_nutrition_summary",
         replace_existing=True,
