@@ -564,45 +564,32 @@ async def cmd_weeklymeals(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # ---------------------------------------------------------------------------
 
 async def cmd_testsummary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from services.db import get_all_users_meals_today, get_all_groups
-    from services.scheduler import daily_nutrition_summary
+    """Send the daily nutrition summary directly to this chat, bypassing the scheduler."""
+    from services.db import get_all_users_meals_today
 
     message = update.effective_message
     chat_id = message.chat_id
 
-    # Show diagnostic info so problems are visible directly in Telegram.
     try:
-        groups = await get_all_groups()
         rows = await get_all_users_meals_today()
         group_rows = [r for r in rows if r.get("chat_id") == chat_id]
-        diag = (
-            f"\U0001f50d {len(groups)} registered group(s) | "
-            f"{len(rows)} total meal row(s) today | "
-            f"{len(group_rows)} in this chat"
-        )
-        await message.reply_text(formatter.escape(diag), parse_mode=ParseMode.MARKDOWN_V2)
 
         if not group_rows:
             await message.reply_text(
                 formatter.escape(
                     "⚠️ No meals found for this chat today.\n"
-                    "Log a meal first with /meal, then retry /testsummary."
+                    "Log a meal with /meal first, then retry /testsummary."
                 ),
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
             return
-    except Exception as exc:
-        await message.reply_text(
-            formatter.escape(f"⚠️ Diagnostic failed: {exc}"),
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        return
 
-    try:
-        await daily_nutrition_summary(context.bot)
-    except Exception:
+        text = formatter.format_daily_nutrition_summary(group_rows)
+        await message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+
+    except Exception as exc:
         logger.exception("Error in cmd_testsummary")
         await message.reply_text(
-            formatter.escape("⚠️ Failed to send summary. Check logs."),
+            formatter.escape(f"⚠️ Failed: {exc}"),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
