@@ -40,10 +40,14 @@ async def _ensure_registered(update: Update) -> dict:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await _ensure_registered(update)
     name = formatter.escape(user["name"])
-    msg = ( 
+    msg = (
         f"👋 Hey *{name}*\\! Welcome to *MakanLens* 🥗\n\n"
-        "I help track your meals by breaking down their macros just from looking at your photos\\!\n\n"
-        "📸 Send any food photo for AI meal analysis\\!"
+        "I break down the macros of your meals just from looking at your photos\\.\n\n"
+        "📸 *Log a meal* — send a food photo, or reply `/meal` to one\n"
+        "✏️ *Fix it* — reply to my analysis in plain English, e\\.g\\. "
+        "_add one fried chicken wing_ or _it's satay, not rendang_\n"
+        "💬 *Just ask* — message me normally, or use `/ask` in a group\n\n"
+        "Try `/today` to see where you're at\\."
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
 

@@ -54,6 +54,7 @@ async def _post_init(application: Application) -> None:
     from telegram import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
     user_commands = [
         BotCommand("start",       "Welcome & command guide"),
+        BotCommand("ask",         "Ask me anything about your food or training"),
         BotCommand("today",       "Today's summary"),
         BotCommand("weight",      "Log your weight (kg)"),
         BotCommand("steps",       "Log step count (auto-logged from iOS Health)"),
@@ -155,7 +156,8 @@ def build_application() -> Application:
         cmd_myreport, cmd_leaderboard,
         cmd_dailymeals, cmd_weeklymeals, cmd_testsummary,
     )
-    from handlers.photo import handle_photo, cmd_meal, handle_meal_correction
+    from handlers.photo import handle_photo, cmd_meal
+    from handlers.chat import handle_text, cmd_ask
     from handlers.instructor import (
         cmd_stats, cmd_report, cmd_week, cmd_meals,
         cmd_schedule, cmd_scheduleweekly, cmd_stopweekly, cmd_checkinstatus, cmd_clearschedule,
@@ -167,6 +169,7 @@ def build_application() -> Application:
     # Register command handlers
     # -----------------------------------------------------------------------
     app.add_handler(CommandHandler("start",       cmd_start))
+    app.add_handler(CommandHandler("ask",         cmd_ask))
     app.add_handler(CommandHandler("health",      cmd_health))
     app.add_handler(CommandHandler("today",       cmd_today))
     app.add_handler(CommandHandler("weight",      cmd_weight))
@@ -206,8 +209,9 @@ def build_application() -> Application:
     app.add_handler(ChatMemberHandler(_on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.ChatType.GROUPS, _on_group_message), group=-1)
 
-    # Correction handler — text replies to the bot's meal analysis messages
-    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, handle_meal_correction))
+    # Single text handler: meal corrections first, then natural-language chat.
+    # Registered after the conversation handlers so /checkin and /pushups still win.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # PTB's CommandHandler does not match commands in photo captions, only in text.
     # This handler catches photos sent with /meal as the caption.

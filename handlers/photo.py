@@ -7,12 +7,15 @@ Triggered two ways:
      Works in groups even when bot privacy mode is enabled, since commands are always received.
 
 Corrections:
-  Reply to the bot's meal analysis message with the corrected values
-  (e.g. "actually satay not rendang" or "350 calories, 28g protein") and the bot
-  will update the log. The bot identifies its own analysis messages via a DB mapping,
-  so no text matching is needed.
+  Reply to the bot's meal analysis message in plain language and the saved log is
+  recalculated in place — add an item ("add one fried chicken wing"), remove one
+  ("no rice"), change a quantity ("there were 2 wings"), fix the dish ("it's satay
+  not rendang"), or set values outright ("350 calories, 28g protein").
+  The bot identifies its own analysis messages via a DB mapping rather than text
+  matching, and only the person who logged the meal may edit it.
 """
 
+import json
 import logging
 
 from telegram import Update
@@ -27,6 +30,17 @@ ANALYSIS_ERROR_MSG = (
     "⚠️ Could not analyse this meal\\. "
     "Try `/meal` with a clearer photo or log manually with `/log meal`\\."
 )
+
+
+def _log_data(log_row: dict) -> dict:
+    """Return a log row's JSONB payload as a dict, tolerating a raw JSON string."""
+    raw = log_row.get("data", {})
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return {}
+    return raw if isinstance(raw, dict) else {}
 
 
 async def _download_photo(photo_message, tg_user, context):
@@ -200,34 +214,44 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _run_meal_analysis(photo_message, message, user, tg_user, context, silent=False)
 
 
-async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handles a text reply to one of the bot's meal analysis messages.
+async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Apply a plain-language correction to a meal the bot already analysed.
 
-    Identification: instead of fragile text matching, we look up the replied-to
-    message ID in the log_messages table. If a mapping exists, it's a meal analysis
-    and we proceed with the correction.
+    Triggered by replying to one of the bot's analysis messages. Rather than matching
+    on message text, the replied-to message ID is looked up in log_messages — if a
+    mapping exists, it is a meal analysis.
+
+    Returns True if the message was consumed as a correction, so the caller can fall
+    through to conversational handling when it was not.
     """
     message = update.effective_message
 
     if not message.reply_to_message:
-        return
+        return False
 
     chat_id    = message.chat_id
     replied_id = message.reply_to_message.message_id
 
     log_row = await db.get_log_by_message(chat_id, replied_id)
     if log_row is None:
-        return  # Not a meal analysis message — silently ignore
+        return False  # Not a meal analysis message
 
     correction_text = (message.text or "").strip()
     if not correction_text:
-        return
+        return False
 
-    original_data = log_row["data"] if isinstance(log_row["data"], dict) else {}
+    # Only the person whose meal it is may edit it — in a group, everyone can see
+    # everyone's analyses, and a stray reply must not rewrite someone else's log.
+    editor = await _resolve_user(update.effective_user, message)
+    if editor is None:
+        return True
+    if editor["id"] != log_row["user_id"]:
+        return False  # Someone else's meal — let the chat handler answer instead
+
+    original_data = _log_data(log_row)
 
     processing = await message.reply_text(
-        formatter.escape("✏️ Applying correction…"),
+        formatter.escape("✏️ Recalculating…"),
         parse_mode=ParseMode.MARKDOWN_V2,
     )
 
@@ -235,13 +259,24 @@ async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_T
     if corrected_raw is None:
         await processing.edit_text(
             formatter.escape(
-                "⚠️ Could not parse the correction. Try:\n"
-                "• Food identity: \"it's satay, not rendang\"\n"
-                "• Specific values: \"calories: 350, protein: 28g\""
+                "⚠️ Could not apply that correction. Try:\n"
+                "• Add or remove an item: \"add one fried chicken wing\"\n"
+                "• Fix the dish: \"it's satay, not rendang\"\n"
+                "• Set values: \"calories 350, protein 28g\""
             ),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
-        return
+        return True
+
+    change_summary = str(corrected_raw.get("change_summary", "")).strip()
+    if change_summary == "NO_CHANGE":
+        # Not actually a correction — probably a question or a comment about the meal.
+        # Drop the placeholder and let the conversational handler take the message.
+        try:
+            await processing.delete()
+        except Exception:
+            pass
+        return False
 
     try:
         corrected_data = nutrition.normalise_nutrition(corrected_raw)
@@ -249,12 +284,22 @@ async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_T
     except Exception:
         logger.exception("Failed to update meal log %s", log_row["id"])
         await processing.edit_text(
-            formatter.escape("⚠️ Correction parsed but could not be saved. Please try again."),
+            formatter.escape("⚠️ Correction understood but could not be saved. Please try again."),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
-        return
+        return True
 
+    footer = f"✏️ _{formatter.escape(change_summary)}_" if change_summary else "✏️ _Updated_"
     await processing.edit_text(
-        formatter.format_meal_analysis(corrected_data) + "\n\n✏️ _Updated_",
+        formatter.format_meal_analysis(corrected_data) + "\n\n" + footer,
         parse_mode=ParseMode.MARKDOWN_V2,
     )
+
+    # Point the mapping at the new message too, so the user can keep correcting
+    # by replying to the latest analysis rather than hunting for the original.
+    try:
+        await db.save_log_message(log_row["id"], processing.chat_id, processing.message_id)
+    except Exception:
+        logger.warning("Could not re-map log_message for log %s", log_row["id"])
+
+    return True
