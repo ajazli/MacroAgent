@@ -43,9 +43,30 @@ def _log_data(log_row: dict) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+# Image tokens scale with area (roughly width x height / 750), so Telegram's
+# largest size (~1280px) costs about 2.5x the ~800px one while adding nothing
+# useful for naming a dish and judging a portion.
+TARGET_PHOTO_EDGE = 800
+
+
+def _pick_photo_size(sizes):
+    """Pick the smallest Telegram photo whose longest edge still clears the target.
+
+    Telegram returns sizes ascending; falls back to the largest when every
+    available size is below the target.
+    """
+    usable = [p for p in sizes if max(p.width, p.height) >= TARGET_PHOTO_EDGE]
+    return min(usable, key=lambda p: p.width * p.height) if usable else sizes[-1]
+
+
 async def _download_photo(photo_message, tg_user, context):
-    """Download the largest photo size. Returns (image_bytes, media_type) or (None, None)."""
-    photo = photo_message.photo[-1]
+    """Download a right-sized copy of the photo. Returns (image_bytes, media_type)."""
+    photo = _pick_photo_size(photo_message.photo)
+    logger.info(
+        "Analysing photo at %dx%d (largest offered: %dx%d)",
+        photo.width, photo.height,
+        photo_message.photo[-1].width, photo_message.photo[-1].height,
+    )
     try:
         tg_file = await context.bot.get_file(photo.file_id)
         image_bytes = bytes(await tg_file.download_as_bytearray())

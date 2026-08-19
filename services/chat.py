@@ -22,42 +22,44 @@ from services.tz import today_sgt
 
 logger = logging.getLogger(__name__)
 
-CHAT_MODEL = "claude-opus-5"
+# Chatting is "read the snapshot and answer warmly" — it does not need Opus-tier
+# reasoning, and every reply is billed at the output rate. Override with the
+# CHAT_MODEL env var if you want to trade cost for sharper answers.
+CHAT_MODEL = os.environ.get("CHAT_MODEL", "claude-sonnet-5").strip()
+
+# Hard ceiling on a reply. Thinking is disabled for chat, so this bounds the
+# entire output cost of a turn — a 3-sentence answer needs nowhere near this.
+MAX_REPLY_TOKENS = 600
 
 # Meal times in the snapshot are rendered in Singapore time.
 _SGT = timezone(timedelta(hours=8))
 
 # Turns of conversation kept per chat (user + assistant messages combined).
-MAX_HISTORY = 12
+MAX_HISTORY = 6
+
+# Meals listed individually in the snapshot before it collapses to a count.
+_MAX_SNAPSHOT_MEALS = 6
 
 SYSTEM_PROMPT = (
-    "You are MakanLens, a friendly fitness and nutrition assistant living in a Telegram chat. "
-    "Your users are in Singapore, so local dishes (chicken rice, nasi lemak, mee goreng, "
-    "kaya toast, teh tarik) come up constantly — talk about food the way a Singaporean would.\n\n"
+    "You are MakanLens, a fitness and nutrition assistant living in a Telegram chat. "
+    "Your users are in Singapore, so local food (chicken rice, nasi lemak, kaya toast, "
+    "teh tarik) comes up constantly.\n\n"
 
-    "How to reply:\n"
-    "• Keep it short. Two or three sentences is usually right; this is a chat, not an article.\n"
-    "• Plain text only. No markdown, no bold, no bullet characters, no headings. "
-    "  A couple of emoji are fine.\n"
-    "• Be warm and direct. Skip the preamble and answer the question.\n\n"
+    "Answer in at most three short sentences. Plain text only, no markdown or bullets; "
+    "a little emoji is fine. Get straight to the point.\n\n"
 
-    "Using their data:\n"
-    "• A snapshot of what this user has logged is provided below. Use those exact numbers.\n"
-    "• Never invent a number that is not in the snapshot. If something has not been logged, "
-    "  say so plainly and tell them how to log it.\n"
-    "• General nutrition and training questions are fine to answer from your own knowledge — "
-    "  just be clear when you are giving a general estimate rather than reading their data.\n\n"
+    "A snapshot of what this user has logged is below. Use those exact numbers and never "
+    "invent one — if something is not logged, say so. General nutrition and training "
+    "questions you may answer from your own knowledge; just be clear when you are "
+    "estimating rather than reading their data.\n\n"
 
-    "Logging:\n"
-    "• You cannot write to their log. When they want something recorded, point them at the command: "
-    "  send a food photo (or reply /meal to one) for meals, /weight, /steps, /sleep, /water, "
-    "  /energy, /workout for everything else.\n"
-    "• To fix a meal you already analysed, they reply to that analysis message with the correction "
-    "  in plain language, e.g. 'add one fried chicken wing' or \"it's satay not rendang\".\n"
-    "• Useful views: /today, /dailymeals, /weeklymeals, /myreport, /leaderboard.\n\n"
+    "You cannot write to their log. To record something they use a food photo (or /meal), "
+    "or /weight, /steps, /sleep, /water, /energy, /workout. To fix a meal they reply to its "
+    "analysis in plain language, e.g. 'add one fried chicken wing'. To review: /today, "
+    "/dailymeals, /weeklymeals, /myreport.\n\n"
 
-    "Stay on fitness, food, and the tracking data. If asked about something unrelated, "
-    "say briefly that it is not your thing and steer back."
+    "If asked about something unrelated to food, training, or their data, say briefly that "
+    "it is not your thing."
 )
 
 
@@ -128,8 +130,15 @@ async def build_user_snapshot(user: dict) -> str:
     lines.append("")
     lines.append("TODAY SO FAR")
     if meals:
-        lines.append(f"Meals ({len(meals)}):")
-        lines.extend(f"  - {m}" for m in meals)
+        # Long meal lists are the one part of the snapshot that can grow without
+        # bound, so show the most recent few and collapse the rest to a count.
+        shown = meals[-_MAX_SNAPSHOT_MEALS:]
+        hidden = len(meals) - len(shown)
+        if hidden:
+            lines.append(f"Meals ({len(meals)}, {hidden} earlier not listed):")
+        else:
+            lines.append(f"Meals ({len(meals)}):")
+        lines.extend(f"  - {m}" for m in shown)
         lines.append(
             f"Totals: {int(cal)} kcal, {round(pro, 1)}g protein, "
             f"{round(carbs, 1)}g carbs, {round(fat, 1)}g fat"
@@ -137,13 +146,34 @@ async def build_user_snapshot(user: dict) -> str:
     else:
         lines.append("Meals: none logged yet")
 
-    lines.append(f"Steps: {steps:,}" if steps else "Steps: not logged")
-    lines.append(f"Water: {water} ml" if water else "Water: not logged")
-    lines.append(f"Weight: {weight} kg" if weight is not None else "Weight: not logged today")
-    lines.append(f"Sleep: {sleep} hrs" if sleep is not None else "Sleep: not logged")
-    lines.append(f"Energy: {energy}/10" if energy is not None else "Energy: not logged")
+    # Only spend tokens on metrics that exist; name the rest once, together.
+    missing = []
+    if steps:
+        lines.append(f"Steps: {steps:,}")
+    else:
+        missing.append("steps")
+    if water:
+        lines.append(f"Water: {water} ml")
+    else:
+        missing.append("water")
+    if weight is not None:
+        lines.append(f"Weight: {weight} kg")
+    else:
+        missing.append("weight")
+    if sleep is not None:
+        lines.append(f"Sleep: {sleep} hrs")
+    else:
+        missing.append("sleep")
+    if energy is not None:
+        lines.append(f"Energy: {energy}/10")
+    else:
+        missing.append("energy")
     if workouts:
         lines.append("Workout: " + ", ".join(workouts))
+    else:
+        missing.append("workout")
+    if missing:
+        lines.append("Not logged today: " + ", ".join(missing))
 
     # Past week of calories, for trend questions.
     try:
@@ -158,10 +188,13 @@ async def build_user_snapshot(user: dict) -> str:
         for row in week_logs:
             by_day.setdefault(row["date"], 0)
             by_day[row["date"]] += int(_log_data(row).get("calories", 0) or 0)
+        # A per-day table costs ~7 lines for information a single line conveys.
+        totals = list(by_day.values())
         lines.append("")
-        lines.append("PAST 7 DAYS (calories per day)")
-        lines.extend(
-            f"  {d.strftime('%a %d %b')}: {by_day[d]} kcal" for d in sorted(by_day)
+        lines.append(
+            f"PAST 7 DAYS: {len(totals)} days logged, "
+            f"avg {round(sum(totals) / len(totals))} kcal/day "
+            f"(low {min(totals)}, high {max(totals)})"
         )
 
     return "\n".join(lines)
@@ -199,8 +232,11 @@ async def generate_reply(
     try:
         response = await client.messages.create(
             model=CHAT_MODEL,
-            max_tokens=4096,
+            max_tokens=MAX_REPLY_TOKENS,
             system=SYSTEM_PROMPT,
+            # Thinking is billed at the output rate and buys nothing here — the
+            # answer is read off the snapshot, not reasoned out.
+            thinking={"type": "disabled"},
             output_config={"effort": "low"},
             messages=messages,
         )
