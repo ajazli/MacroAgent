@@ -18,7 +18,10 @@ left alone.
 
 import logging
 import os
+import re
 import time
+
+from typing import Optional
 
 from telegram import Update
 from telegram.constants import ChatAction
@@ -44,7 +47,7 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-COOLDOWN_SECONDS = _env_int("CHAT_COOLDOWN_SECONDS", 5)
+COOLDOWN_SECONDS = _env_int("CHAT_COOLDOWN_SECONDS", 3)
 DAILY_REPLY_LIMIT = _env_int("CHAT_DAILY_LIMIT", 40)
 
 _LAST_REPLY_KEY = "nl_last_reply_ts"
@@ -58,6 +61,13 @@ _TRIVIAL = {
     "haha", "hahaha", "lol", "lmao", "hehe", "yes", "yeah", "yep", "ya", "no",
     "nope", "sure", "alright", "noted", "got it", "gotcha", "true", "fair",
     "understood", "roger", "done", "bye", "hi", "hello", "hey",
+}
+
+# Greetings get a canned answer rather than an API call: being tagged and
+# ignored is worse than any saving, and a hello needs no model to answer.
+_GREETINGS = {
+    "hi", "hello", "hey", "yo", "sup", "hola", "helo", "hai",
+    "morning", "good morning", "good afternoon", "good evening", "gm",
 }
 
 FALLBACK_REPLY = (
@@ -83,7 +93,8 @@ def _is_trivial(text: str) -> bool:
 
 
 def _throttled(context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """True if this user replied too recently. Cooldown is per user, not per chat."""
+    """True if this user replied too recently. Per user, and only for non-explicit
+    messages — see the call site in _converse."""
     if COOLDOWN_SECONDS <= 0:
         return False
     now = time.monotonic()
@@ -105,33 +116,64 @@ def _quota_state(context: ContextTypes.DEFAULT_TYPE) -> dict:
     return quota
 
 
-def _is_addressed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """True when the message is clearly meant for the bot."""
+def _mentions_bot(message, bot) -> bool:
+    """True if this message @-mentions the bot.
+
+    Checks the entities Telegram sends as well as the raw text, and compares
+    case-insensitively — @MakanLens_AI_Bot is the same handle as @makanlens_ai_bot.
+    """
+    username = (getattr(bot, "username", "") or "").lower()
+    if not username:
+        return False
+
+    handle = f"@{username}"
+    text = message.text or message.caption or ""
+
+    for entity in (message.entities or []) + (message.caption_entities or []):
+        if entity.type == "mention":
+            if text[entity.offset:entity.offset + entity.length].lower() == handle:
+                return True
+        elif entity.type == "text_mention" and getattr(entity, "user", None):
+            if entity.user.id == bot.id:
+                return True
+
+    return handle in text.lower()
+
+
+def _address_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+    """Why this message counts as spoken to the bot, or None if it doesn't."""
     message = update.effective_message
     chat = update.effective_chat
 
     if chat and chat.type == "private":
-        return True
+        return "private"
 
     try:
+        if _mentions_bot(message, context.bot):
+            return "mention"
         replied = message.reply_to_message
         if replied and replied.from_user and replied.from_user.id == context.bot.id:
-            return True
-
-        username = context.bot.username
-        if username and f"@{username}".lower() in (message.text or "").lower():
-            return True
+            return "reply"
     except Exception:
         logger.debug("Could not determine whether the bot was addressed", exc_info=True)
 
-    return False
+    return None
 
 
-def _strip_mention(text: str, username: str | None) -> str:
-    """Remove the bot's @handle so it doesn't clutter the prompt."""
+def _is_addressed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """True when the message is clearly meant for the bot."""
+    return _address_reason(update, context) is not None
+
+
+def _strip_mention(text: str, username: Optional[str]) -> str:
+    """Remove the bot's @handle so it doesn't clutter the prompt.
+
+    Case-insensitive: Telegram preserves whatever casing the sender typed, and a
+    leftover "@MakanLens_AI_Bot" in the prompt confused the model.
+    """
     if not username:
         return text.strip()
-    cleaned = text.replace(f"@{username}", " ").replace(f"@{username.lower()}", " ")
+    cleaned = re.sub(rf"@{re.escape(username)}\b", " ", text, flags=re.IGNORECASE)
     return " ".join(cleaned.split())
 
 
@@ -148,15 +190,38 @@ async def _converse(
     is skipped (the cooldown and daily cap still apply).
     """
     message = update.effective_message
+    chat_id = message.chat_id
 
-    if not explicit and _is_trivial(prompt):
+    # Greetings and bare mentions are answered here, without an API call. Being
+    # tagged and getting nothing back is the worst outcome, and neither needs a model.
+    if not prompt or prompt.strip(".!? ").lower() in _GREETINGS:
+        # Costs nothing, so it is always worth sending — we only reach _converse
+        # when the bot was actually addressed.
+        who = (update.effective_user.first_name or "there").strip()
+        await message.reply_text(
+            f"Hey {who} 👋 Ask me about your food or training — "
+            "\"how much protein today?\", \"how is Ming Hui doing?\" — "
+            "or try /today for your day so far."
+        )
         return
 
-    if _throttled(context):
-        return  # Silent: a "slow down" notice would just be noise
+    # The trivial filter is for group chatter ("thanks", "nice" under a meal
+    # analysis). An explicit summon is never chatter, so it bypasses this.
+    if not explicit and _is_trivial(prompt):
+        logger.info("chat: skipped trivial message in %s: %r", chat_id, prompt[:40])
+        return
+
+    # The cooldown guards against passing chatter piling up calls. A deliberate
+    # summon is never throttled — being tagged and staying silent is exactly the
+    # confusing behaviour this is meant to avoid, and the daily cap below already
+    # bounds what one person can spend.
+    if not explicit and _throttled(context):
+        logger.info("chat: throttled in %s (cooldown %ss)", chat_id, COOLDOWN_SECONDS)
+        return
 
     quota = _quota_state(context)
     if DAILY_REPLY_LIMIT > 0 and quota["count"] >= DAILY_REPLY_LIMIT:
+        logger.info("chat: daily limit %s reached in %s", DAILY_REPLY_LIMIT, chat_id)
         if not quota["notified"]:
             quota["notified"] = True
             await message.reply_text(QUOTA_REPLY)
@@ -230,14 +295,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
 
     # 2) Natural-language reply, but only when the bot is being spoken to.
-    if not _is_addressed(update, context):
+    reason = _address_reason(update, context)
+    if reason is None:
         return
 
     prompt = _strip_mention(text, context.bot.username)
-    if not prompt:
-        return
 
-    await _converse(update, context, prompt, explicit=False)
+    # An @mention is someone deliberately summoning the bot, so it always gets an
+    # answer. A DM or a reply to the bot is weaker — "ok" or "thanks" there is an
+    # acknowledgement, and should still cost nothing.
+    await _converse(update, context, prompt, explicit=reason == "mention")
 
 
 async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
