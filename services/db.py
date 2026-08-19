@@ -625,6 +625,72 @@ async def update_log_data(log_id: int, data: dict) -> None:
         raise
 
 
+async def record_group_member(
+    chat_id: int, user_id: int, display_name: Optional[str] = None
+) -> None:
+    """Note that a user belongs to a group chat.
+
+    Group members can ask about each other's logged data, so this roster is the
+    boundary that keeps that inside one group — every lookup filters on chat_id.
+    display_name is how Telegram shows them, which is how the others refer to them.
+    """
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO group_members (chat_id, user_id, display_name) "
+                "VALUES ($1, $2, $3) "
+                "ON CONFLICT (chat_id, user_id) DO UPDATE "
+                "SET last_seen = NOW(), "
+                "    display_name = COALESCE(EXCLUDED.display_name, group_members.display_name)",
+                chat_id, user_id, display_name,
+            )
+    except Exception:
+        logger.exception("record_group_member failed for chat=%s user=%s", chat_id, user_id)
+
+
+async def get_group_members(chat_id: int) -> list[dict]:
+    """Return every user known to belong to this chat: {id, name, telegram_id}."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT u.id, u.name, u.telegram_id, gm.display_name "
+                "FROM group_members gm JOIN users u ON u.id = gm.user_id "
+                "WHERE gm.chat_id = $1 ORDER BY u.name",
+                chat_id,
+            )
+            return [dict(r) for r in rows]
+    except Exception:
+        logger.exception("get_group_members failed for chat=%s", chat_id)
+        return []
+
+
+async def get_group_logs_today(chat_id: int) -> list[dict]:
+    """Today's logs for every member of this chat, with the owner's name attached.
+
+    Scoped by the group_members roster, so a user's data can only surface in a
+    chat they are actually part of.
+    """
+    pool = get_pool()
+    today = today_sgt()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT l.id, l.user_id, u.name, l.date, l.type, l.data, l.created_at "
+                "FROM group_members gm "
+                "JOIN users u ON u.id = gm.user_id "
+                "JOIN logs l ON l.user_id = gm.user_id "
+                "WHERE gm.chat_id = $1 AND l.date = $2 "
+                "ORDER BY u.name, l.created_at",
+                chat_id, today,
+            )
+            return [dict(r) for r in rows]
+    except Exception:
+        logger.exception("get_group_logs_today failed for chat=%s", chat_id)
+        return []
+
+
 async def get_all_users_meals_today() -> list[dict]:
     """Return today's meal logs joined with user info and the chat_id they were logged in."""
     pool = get_pool()

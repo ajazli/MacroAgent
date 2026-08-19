@@ -121,17 +121,53 @@ async def _on_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await _register_group(context.bot, change.chat)
 
 
+# Groups already registered, and (chat_id, telegram_id) pairs already on a roster.
+# Both are write-once facts, so caching them keeps the passive observer below from
+# hitting the DB on every single group message.
+_known_group_ids: set[int] = set()
+_known_members: set[tuple[int, int]] = set()
+
+
 async def _on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Passively register the group on any group update (commands or messages).
-    Runs in handler group -1 so it never blocks command handling."""
+    """Passively register the group and note who is in it.
+
+    Runs in handler group -1 so it never blocks command handling. The roster it
+    builds is what lets group members ask about each other's logged data — and,
+    because every lookup filters on chat_id, what keeps that inside one group.
+    """
     chat = update.effective_chat
     if not chat or chat.type not in ("group", "supergroup"):
         return
-    from services.db import get_all_groups
-    groups = await get_all_groups()
-    known_ids = {g["chat_id"] for g in groups}
-    if chat.id not in known_ids:
-        await _register_group(context.bot, chat)
+
+    from services.db import get_all_groups, get_or_create_user, record_group_member
+
+    if chat.id not in _known_group_ids:
+        try:
+            groups = await get_all_groups()
+            _known_group_ids.update(g["chat_id"] for g in groups)
+        except Exception:
+            logger.warning("Could not load known groups", exc_info=True)
+        if chat.id not in _known_group_ids:
+            await _register_group(context.bot, chat)
+            _known_group_ids.add(chat.id)
+
+    tg_user = update.effective_user
+    if not tg_user or tg_user.is_bot:
+        return
+
+    key = (chat.id, tg_user.id)
+    if key in _known_members:
+        return
+    try:
+        display_name = (
+            tg_user.username.lower() if tg_user.username
+            else (tg_user.first_name or "user").lower()
+        )
+        user = await get_or_create_user(tg_user.id, display_name)
+        await record_group_member(chat.id, user["id"], tg_user.full_name)
+        _known_members.add(key)
+    except Exception:
+        logger.warning("Could not record group member %s in %s", tg_user.id, chat.id, exc_info=True)
 
 
 def build_application() -> Application:

@@ -188,7 +188,8 @@ async def _converse(
 
     try:
         reply = await chat_service.generate_reply(
-            user, prompt, history=history, is_group=is_group
+            user, prompt, history=history, is_group=is_group,
+            chat_id=message.chat_id if is_group else None,
         )
     except Exception:
         logger.exception("Chat reply generation failed for user %s", user["id"])
