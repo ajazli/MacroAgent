@@ -42,7 +42,7 @@ async def resolve_clocker_topic(bot, chat_id: int) -> Optional[int]:
         return None
     except Exception as exc:
         logger.warning("Could not resolve Clocker topic for %s: %s", chat_id, exc)
-        return _clocker_cache.get(chat_id)
+        return _clocker_cache.get(chat_id)  # Return cached value if available
 
 
 async def _get_groups_with_topics(bot) -> list[tuple[int, Optional[int]]]:
@@ -54,6 +54,7 @@ async def _get_groups_with_topics(bot) -> list[tuple[int, Optional[int]]]:
     for g in groups:
         chat_id = g["chat_id"]
         if chat_id not in _clocker_cache:
+            # Populate cache from DB first, then attempt live resolve
             _clocker_cache[chat_id] = g.get("clocker_topic_id")
             await resolve_clocker_topic(bot, chat_id)
         result.append((chat_id, _clocker_cache.get(chat_id)))
@@ -66,12 +67,7 @@ def _escape(text: str) -> str:
 
 
 async def daily_nutrition_summary(bot) -> None:
-    """23:00 SGT — send each group only the meals logged in that group's chat.
-
-    Group isolation: meals are linked to a chat_id via the log_messages table
-    (populated when a meal photo is analysed). Only meals from each specific
-    group are included in that group's summary — no cross-group data leakage.
-    """
+    """23:00 SGT — send each group only the meals logged in that group's chat."""
     from services.db import get_all_users_meals_today
     from services import formatter
 
@@ -89,7 +85,6 @@ async def daily_nutrition_summary(bot) -> None:
     logger.info("daily_nutrition_summary: sending to %d group(s)", len(groups))
 
     for chat_id, clocker_topic_id in groups:
-        # Strict per-group filter: only include meals logged in this specific chat
         group_rows = [r for r in all_rows if r.get("chat_id") == chat_id]
         if not group_rows:
             logger.info("daily_nutrition_summary: no meals for chat %s — skipping", chat_id)
@@ -109,11 +104,11 @@ async def daily_nutrition_summary(bot) -> None:
 async def daily_morning_prompt(bot) -> None:
     """8am SGT daily prompt for weight, sleep, energy, water — sent to all groups."""
     text = (
-        "\U0001f305 *Good morning\\!* Time to log your daily metrics:\n\n"
+        "🌅 *Good morning\\!* Time to log your daily metrics:\n\n"
         "⚖️ `/weight` _e\\.g\\. /weight 74\\.2_\n"
-        "\U0001f634 `/sleep` _e\\.g\\. /sleep 7\\.5_\n"
+        "😴 `/sleep` _e\\.g\\. /sleep 7\\.5_\n"
         "⚡ `/energy` _e\\.g\\. /energy 8_\n"
-        "\U0001f4a7 `/water` _e\\.g\\. /water 500_"
+        "💧 `/water` _e\\.g\\. /water 500_"
     )
     for chat_id, clocker_topic_id in await _get_groups_with_topics(bot):
         kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2"}
@@ -136,6 +131,7 @@ async def weekly_checkin_trigger(bot) -> None:
 
     today = today_sgt()
 
+    # Auto-schedule next occurrence for all indefinite recurring users
     try:
         weekly = await get_all_weekly_schedules()
         for w in weekly:
@@ -155,7 +151,7 @@ async def weekly_checkin_trigger(bot) -> None:
         name = entry["name"]
         mention = _escape(f"@{name}" if not name.startswith("@") else name)
         text = (
-            f"\U0001f4cb *Weekly Check\\-In Reminder*\n\n"
+            f"📋 *Weekly Check\\-In Reminder*\n\n"
             f"Hey {mention}\\, it's your check\\-in day\\!\n"
             f"Use `/checkin` to complete your weekly assessment\\."
         )

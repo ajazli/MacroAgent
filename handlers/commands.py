@@ -41,9 +41,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await _ensure_registered(update)
     name = formatter.escape(user["name"])
     msg = ( 
-        f"\U0001f44b Hey *{name}*\\! Welcome to *MakanLens* \U0001f957\n\n"
+        f"👋 Hey *{name}*\\! Welcome to *MakanLens* 🥗\n\n"
         "I help track your meals by breaking down their macros just from looking at your photos\\!\n\n"
-        "\U0001f4f8 Send any food photo for AI meal analysis\\!"
+        "📸 Send any food photo for AI meal analysis\\!"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -311,7 +311,7 @@ async def cmd_weight_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         plt.close(fig)
         buf.seek(0)
 
-        await update.message.reply_photo(photo=buf, caption=f"Weight trend for {user['name']} \U0001f4c8")
+        await update.message.reply_photo(photo=buf, caption=f"Weight trend for {user['name']} 📈")
 
     except Exception:
         logger.exception("Error in cmd_weight_graph for telegram_id=%s", update.effective_user.id)
@@ -343,19 +343,19 @@ async def cmd_weight_avg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         high = max(weights)
         latest = weights[-1]
         trend = round(latest - weights[0], 2)
-        trend_icon = "\U0001f4c8" if trend > 0 else ("\U0001f4c9" if trend < 0 else "➡️")
+        trend_icon = "📈" if trend > 0 else ("📉" if trend < 0 else "➡️")
 
         name_esc = formatter.escape(user["name"])
         msg = (
             f"⚖️ *{name_esc}'s Weight \\(past 7 days\\)*\n"
-            f"{formatter.escape('━' * 15)}\n"
-            f"\U0001f4ca Average: *{formatter.escape(str(avg))} kg*\n"
-            f"\U0001f53d Lowest:  {formatter.escape(str(low))} kg\n"
-            f"\U0001f53c Highest: {formatter.escape(str(high))} kg\n"
-            f"\U0001f4cc Latest:  {formatter.escape(str(latest))} kg\n"
+            f"{formatter.escape('━━━━━━━━━━━━━━━')}\n"
+            f"📊 Average: *{formatter.escape(str(avg))} kg*\n"
+            f"🔽 Lowest:  {formatter.escape(str(low))} kg\n"
+            f"🔼 Highest: {formatter.escape(str(high))} kg\n"
+            f"📌 Latest:  {formatter.escape(str(latest))} kg\n"
             f"{trend_icon} Trend:   *{formatter.escape(str(abs(trend)))} kg "
             f"{'gain' if trend > 0 else ('loss' if trend < 0 else 'no change')}*\n"
-            f"{formatter.escape('━' * 15)}\n"
+            f"{formatter.escape('━━━━━━━━━━━━━━━')}\n"
             f"_{formatter.escape(str(len(entries)))} entries over 7 days_"
         )
         await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
@@ -412,7 +412,7 @@ async def cmd_steps_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         for spine in ax.spines.values():
             spine.set_edgecolor("#45475a")
 
-        ax.set_title(f"\U0001f45f {user['name']}'s Steps — Past 7 Days",
+        ax.set_title(f"👟 {user['name']}'s Steps — Past 7 Days",
                      color="#cdd6f4", fontsize=12, pad=12)
         ax.set_ylabel("steps", color="#cdd6f4", fontsize=10)
         ax.yaxis.label.set_color("#cdd6f4")
@@ -425,7 +425,7 @@ async def cmd_steps_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         plt.close(fig)
         buf.seek(0)
 
-        await update.message.reply_photo(photo=buf, caption=f"Steps trend for {user['name']} \U0001f45f")
+        await update.message.reply_photo(photo=buf, caption=f"Steps trend for {user['name']} 👟")
 
     except Exception:
         logger.exception("Error in cmd_steps_graph for telegram_id=%s", update.effective_user.id)
@@ -457,19 +457,19 @@ async def cmd_steps_avg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         high = max(counts)
         latest = counts[-1]
         trend = latest - counts[0]
-        trend_icon = "\U0001f4c8" if trend > 0 else ("\U0001f4c9" if trend < 0 else "➡️")
+        trend_icon = "📈" if trend > 0 else ("📉" if trend < 0 else "➡️")
 
         name_esc = formatter.escape(user["name"])
         msg = (
-            f"\U0001f45f *{name_esc}'s Steps \\(past 7 days\\)*\n"
-            f"{formatter.escape('━' * 15)}\n"
-            f"\U0001f4ca Average: *{formatter.escape(f'{avg:,}')} steps*\n"
-            f"\U0001f53d Lowest:  {formatter.escape(f'{low:,}')} steps\n"
-            f"\U0001f53c Highest: {formatter.escape(f'{high:,}')} steps\n"
-            f"\U0001f4cc Latest:  {formatter.escape(f'{latest:,}')} steps\n"
+            f"👟 *{name_esc}'s Steps \\(past 7 days\\)*\n"
+            f"{formatter.escape('━━━━━━━━━━━━━━━')}\n"
+            f"📊 Average: *{formatter.escape(f'{avg:,}')} steps*\n"
+            f"🔽 Lowest:  {formatter.escape(f'{low:,}')} steps\n"
+            f"🔼 Highest: {formatter.escape(f'{high:,}')} steps\n"
+            f"📌 Latest:  {formatter.escape(f'{latest:,}')} steps\n"
             f"{trend_icon} Trend:   *{formatter.escape(f'{abs(trend):,}')} steps "
             f"{'gain' if trend > 0 else ('loss' if trend < 0 else 'no change')}*\n"
-            f"{formatter.escape('━' * 15)}\n"
+            f"{formatter.escape('━━━━━━━━━━━━━━━')}\n"
             f"_{formatter.escape(str(len(entries)))} days tracked_"
         )
         await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
