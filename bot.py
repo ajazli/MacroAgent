@@ -274,6 +274,12 @@ async def _run_polling_with_api(app: Application) -> None:
 
     try:
         async with app:
+            # PTB only invokes post_init from run_polling()/run_webhook(). This
+            # function drives polling by hand so it can host the API server on the
+            # same loop, so post_init has to be called explicitly — without it the
+            # scheduler never starts and no timed job ever fires.
+            await _post_init(app)
+
             await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
             await app.start()
 
@@ -289,6 +295,7 @@ async def _run_polling_with_api(app: Application) -> None:
                 await runner.cleanup()
                 await app.updater.stop()
                 await app.stop()
+                await _post_shutdown(app)
     finally:
         await close_pool()
 

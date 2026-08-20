@@ -27,6 +27,14 @@ def get_clocker_topic_id(chat_id: int) -> Optional[int]:
 async def resolve_clocker_topic(bot, chat_id: int) -> Optional[int]:
     """Scan the group's forum topics for one named 'Clocker', cache and return its thread ID."""
     from services.db import set_group_clocker_topic
+
+    # The Bot API exposes no method to list a forum's topics, so on python-telegram-bot
+    # there is nothing to call. Fall back to whatever is cached from the DB; with no
+    # thread id, messages land in the group's General topic, which is fine.
+    if not hasattr(bot, "get_forum_topics"):
+        _clocker_cache.setdefault(chat_id, None)
+        return _clocker_cache.get(chat_id)
+
     try:
         result = await bot.get_forum_topics(chat_id=chat_id)
         for topic in result.topics:
@@ -171,6 +179,10 @@ async def weekly_checkin_trigger(bot) -> None:
 
 def start_scheduler(bot) -> AsyncIOScheduler:
     global _scheduler
+    if _scheduler is not None and _scheduler.running:
+        logger.info("Scheduler already running — not starting a second one")
+        return _scheduler
+
     _scheduler = AsyncIOScheduler(timezone=_SGT)
 
     _scheduler.add_job(
@@ -197,6 +209,8 @@ def start_scheduler(bot) -> AsyncIOScheduler:
 
     _scheduler.start()
     logger.info("Scheduler started (Asia/Singapore timezone) — multi-group mode")
+    for job in _scheduler.get_jobs():
+        logger.info("  scheduled job %-24s next run: %s", job.id, job.next_run_time)
     return _scheduler
 
 
