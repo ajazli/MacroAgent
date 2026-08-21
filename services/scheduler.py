@@ -4,13 +4,16 @@ Uses APScheduler's AsyncIOScheduler (same event loop as the bot).
 Supports multiple groups — no GROUP_CHAT_ID env var required.
 
 Jobs (all Asia/Singapore):
-  23:00 daily  — daily_nutrition_summary, per-group meal recap
-  10:00 daily  — weekly_checkin_trigger, pings only users with a check-in due
+  23:00 daily — daily_nutrition_summary, per-group meal recap
 
-The 08:00 "log your daily metrics" prompt was removed: the bot is focused on
-meal analysis, and it nagged every group daily for weight/sleep/energy/water.
-The /weight, /sleep, /energy, /water commands still work for anyone who wants
-them — nothing asks for them unprompted any more.
+This is the only scheduled job. The 08:00 "log your daily metrics" prompt and
+the 10:00 weekly check-in ping were both removed: the bot is focused on meal
+analysis, and neither should message a group unprompted.
+
+The commands behind them still work — /weight, /sleep, /energy, /water,
+/checkin, /schedule — nothing is asked for automatically any more. Note that
+without this job, recurring check-ins are no longer rolled forward, so
+/scheduleweekly will not produce reminders on its own.
 """
 
 import logging
@@ -78,11 +81,6 @@ async def _get_groups_with_topics(bot) -> list[tuple[int, Optional[int]]]:
     return result
 
 
-def _escape(text: str) -> str:
-    special = r"\_*[]()~`>#+-=|{}.!"
-    return "".join(f"\\{c}" if c in special else c for c in str(text))
-
-
 async def daily_nutrition_summary(bot) -> None:
     """23:00 SGT — send each group only the meals logged in that group's chat."""
     from services.db import get_all_users_meals_today
@@ -118,55 +116,6 @@ async def daily_nutrition_summary(bot) -> None:
             logger.error("daily_nutrition_summary: failed to send to %s: %s", chat_id, exc)
 
 
-async def weekly_checkin_trigger(bot) -> None:
-    """10am SGT — auto-schedule recurring check-ins and ping users due today."""
-    from datetime import timedelta
-    from services.db import (
-        get_check_ins_for_date, mark_check_in_prompted,
-        get_all_weekly_schedules, schedule_check_in,
-    )
-    from services.tz import today_sgt
-
-    today = today_sgt()
-
-    # Auto-schedule next occurrence for all indefinite recurring users
-    try:
-        weekly = await get_all_weekly_schedules()
-        for w in weekly:
-            days_ahead = (w["day_of_week"] - today.weekday()) % 7 or 7
-            next_date = today + timedelta(days=days_ahead)
-            await schedule_check_in(w["user_id"], next_date)
-    except Exception as exc:
-        logger.warning("Could not auto-schedule weekly check-ins: %s", exc)
-
-    due = await get_check_ins_for_date(today)
-    if not due:
-        return
-
-    groups = await _get_groups_with_topics(bot)
-
-    for entry in due:
-        name = entry["name"]
-        mention = _escape(f"@{name}" if not name.startswith("@") else name)
-        text = (
-            f"📋 *Weekly Check\\-In Reminder*\n\n"
-            f"Hey {mention}\\, it's your check\\-in day\\!\n"
-            f"Use `/checkin` to complete your weekly assessment\\."
-        )
-        for chat_id, clocker_topic_id in groups:
-            kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2"}
-            if clocker_topic_id:
-                kwargs["message_thread_id"] = clocker_topic_id
-            try:
-                await bot.send_message(**kwargs)
-            except Exception as exc:
-                logger.error("Failed to send check-in prompt for %s in %s: %s", name, chat_id, exc)
-        try:
-            await mark_check_in_prompted(entry["user_id"], entry["scheduled_date"])
-        except Exception as exc:
-            logger.error("Failed to mark check-in prompted for %s: %s", name, exc)
-
-
 def start_scheduler(bot) -> AsyncIOScheduler:
     global _scheduler
     if _scheduler is not None and _scheduler.running:
@@ -175,13 +124,6 @@ def start_scheduler(bot) -> AsyncIOScheduler:
 
     _scheduler = AsyncIOScheduler(timezone=_SGT)
 
-    _scheduler.add_job(
-        weekly_checkin_trigger,
-        "cron", hour=10, minute=0,
-        args=[bot],
-        id="weekly_checkin_trigger",
-        replace_existing=True,
-    )
     _scheduler.add_job(
         daily_nutrition_summary,
         "cron", hour=23, minute=0,
