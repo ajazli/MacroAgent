@@ -1,7 +1,16 @@
 """
-Scheduled jobs for the fitness bot.
+Scheduled jobs for the bot.
 Uses APScheduler's AsyncIOScheduler (same event loop as the bot).
 Supports multiple groups — no GROUP_CHAT_ID env var required.
+
+Jobs (all Asia/Singapore):
+  23:00 daily  — daily_nutrition_summary, per-group meal recap
+  10:00 daily  — weekly_checkin_trigger, pings only users with a check-in due
+
+The 08:00 "log your daily metrics" prompt was removed: the bot is focused on
+meal analysis, and it nagged every group daily for weight/sleep/energy/water.
+The /weight, /sleep, /energy, /water commands still work for anyone who wants
+them — nothing asks for them unprompted any more.
 """
 
 import logging
@@ -109,25 +118,6 @@ async def daily_nutrition_summary(bot) -> None:
             logger.error("daily_nutrition_summary: failed to send to %s: %s", chat_id, exc)
 
 
-async def daily_morning_prompt(bot) -> None:
-    """8am SGT daily prompt for weight, sleep, energy, water — sent to all groups."""
-    text = (
-        "🌅 *Good morning\\!* Time to log your daily metrics:\n\n"
-        "⚖️ `/weight` _e\\.g\\. /weight 74\\.2_\n"
-        "😴 `/sleep` _e\\.g\\. /sleep 7\\.5_\n"
-        "⚡ `/energy` _e\\.g\\. /energy 8_\n"
-        "💧 `/water` _e\\.g\\. /water 500_"
-    )
-    for chat_id, clocker_topic_id in await _get_groups_with_topics(bot):
-        kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2"}
-        if clocker_topic_id:
-            kwargs["message_thread_id"] = clocker_topic_id
-        try:
-            await bot.send_message(**kwargs)
-        except Exception as exc:
-            logger.error("Failed to send morning prompt to %s: %s", chat_id, exc)
-
-
 async def weekly_checkin_trigger(bot) -> None:
     """10am SGT — auto-schedule recurring check-ins and ping users due today."""
     from datetime import timedelta
@@ -185,13 +175,6 @@ def start_scheduler(bot) -> AsyncIOScheduler:
 
     _scheduler = AsyncIOScheduler(timezone=_SGT)
 
-    _scheduler.add_job(
-        daily_morning_prompt,
-        "cron", hour=8, minute=0,
-        args=[bot],
-        id="daily_morning_prompt",
-        replace_existing=True,
-    )
     _scheduler.add_job(
         weekly_checkin_trigger,
         "cron", hour=10, minute=0,
