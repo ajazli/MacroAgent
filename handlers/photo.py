@@ -12,7 +12,8 @@ Corrections:
   ("no rice"), change a quantity ("there were 2 wings"), fix the dish ("it's satay
   not rendang"), or set values outright ("350 calories, 28g protein").
   The bot identifies its own analysis messages via a DB mapping rather than text
-  matching, and only the person who logged the meal may edit it.
+  matching. Anyone in the chat may correct any meal analysed there — the chat is
+  the boundary, not the owner — and a cross-edit says whose log it changed.
 """
 
 import json
@@ -261,13 +262,14 @@ async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_T
     if not correction_text:
         return False
 
-    # Only the person whose meal it is may edit it — in a group, everyone can see
-    # everyone's analyses, and a stray reply must not rewrite someone else's log.
+    # Anyone in this chat may correct any meal analysed here — the person who
+    # cooked or shared the food often knows it better than whoever photographed
+    # it. The boundary is the chat, not the owner: get_log_by_message is keyed by
+    # (chat_id, message_id), so only meals logged in this chat are reachable.
     editor = await _resolve_user(update.effective_user, message)
     if editor is None:
         return True
-    if editor["id"] != log_row["user_id"]:
-        return False  # Someone else's meal — let the chat handler answer instead
+    is_cross_edit = editor["id"] != log_row["user_id"]
 
     original_data = _log_data(log_row)
 
@@ -311,6 +313,13 @@ async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_T
         return True
 
     footer = f"✏️ _{formatter.escape(change_summary)}_" if change_summary else "✏️ _Updated_"
+    if is_cross_edit:
+        # In a group it must be obvious whose log just moved, and who moved it.
+        owner = log_row.get("owner_name") or "someone else"
+        footer += (
+            f"\n_{formatter.escape(owner)}'s meal, corrected by "
+            f"{formatter.escape(editor['name'])}_"
+        )
     await processing.edit_text(
         formatter.format_meal_analysis(corrected_data) + "\n\n" + footer,
         parse_mode=ParseMode.MARKDOWN_V2,

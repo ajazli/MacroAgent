@@ -600,8 +600,11 @@ async def get_log_by_message(chat_id: int, message_id: int) -> Optional[dict]:
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT l.id, l.user_id, l.date, l.type, l.data, l.created_at "
-                "FROM log_messages lm JOIN logs l ON l.id = lm.log_id "
+                "SELECT l.id, l.user_id, l.date, l.type, l.data, l.created_at, "
+                "       u.name AS owner_name "
+                "FROM log_messages lm "
+                "JOIN logs l ON l.id = lm.log_id "
+                "JOIN users u ON u.id = l.user_id "
                 "WHERE lm.chat_id = $1 AND lm.message_id = $2",
                 chat_id, message_id,
             )

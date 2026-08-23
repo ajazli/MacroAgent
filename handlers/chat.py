@@ -285,8 +285,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not text or text.startswith("/"):
         return
 
-    # 1) Meal correction takes priority over conversation.
-    if message.reply_to_message:
+    # 1) Meal correction takes priority over conversation. Skip the attempt for
+    #    pure acknowledgements — "nice" under someone's analysis is applause, not
+    #    an edit, and working that out costs a reasoning-model call.
+    if message.reply_to_message and not _is_trivial(text):
         try:
             if await handle_meal_correction(update, context):
                 return
