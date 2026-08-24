@@ -39,7 +39,7 @@ def _user_display_name(update: Update) -> str:
 
 async def _ensure_registered(update: Update) -> dict:
     tg_user = update.effective_user
-    return await db.get_or_create_user(tg_user.id, _user_display_name(update))
+    return await db.get_or_create_user_from_tg(tg_user)
 
 
 # ---------------------------------------------------------------------------

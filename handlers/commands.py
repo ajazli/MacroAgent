@@ -30,7 +30,7 @@ def _user_display_name(update: Update) -> str:
 async def _ensure_registered(update: Update) -> dict:
     """Auto-register user if not yet in DB and return the user row."""
     tg_user = update.effective_user
-    return await db.get_or_create_user(tg_user.id, _user_display_name(update))
+    return await db.get_or_create_user_from_tg(tg_user)
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,15 @@ async def _ensure_registered(update: Update) -> dict:
 # ---------------------------------------------------------------------------
 
 def _member_label(member: dict) -> str:
-    """How to refer to someone: their Telegram display name if we have it."""
+    """How to refer to someone in bot output.
+
+    Their @handle when they have one — unambiguous, stable across display-name
+    changes, and Telegram renders it as a real mention. Falls back to the display
+    name for accounts with no username, where an "@" would be an invented handle.
+    """
+    handle = (member.get("username") or "").strip()
+    if handle:
+        return f"@{handle}"
     return (member.get("display_name") or "").strip() or member["name"]
 
 

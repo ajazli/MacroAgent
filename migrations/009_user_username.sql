@@ -1,0 +1,11 @@
+-- The Telegram @handle, stored separately from users.name.
+--
+-- users.name is whatever we could get at first sight — the username for some
+-- people, a first name for others — so it cannot tell you whether prefixing "@"
+-- would produce a real, clickable mention or an invented one. This column holds
+-- the handle only when the person actually has one.
+--
+-- Not backfilled: there is no way to tell retroactively which existing names
+-- were handles. It fills in as people interact, since get_or_create_user runs on
+-- essentially every message.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;

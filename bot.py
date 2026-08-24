@@ -139,7 +139,7 @@ async def _on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not chat or chat.type not in ("group", "supergroup"):
         return
 
-    from services.db import get_all_groups, get_or_create_user, record_group_member
+    from services.db import get_all_groups, get_or_create_user_from_tg, record_group_member
 
     if chat.id not in _known_group_ids:
         try:
@@ -159,11 +159,7 @@ async def _on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if key in _known_members:
         return
     try:
-        display_name = (
-            tg_user.username.lower() if tg_user.username
-            else (tg_user.first_name or "user").lower()
-        )
-        user = await get_or_create_user(tg_user.id, display_name)
+        user = await get_or_create_user_from_tg(tg_user)
         await record_group_member(chat.id, user["id"], tg_user.full_name)
         _known_members.add(key)
     except Exception:

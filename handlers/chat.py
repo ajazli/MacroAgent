@@ -229,11 +229,7 @@ async def _converse(
 
     tg_user = update.effective_user
     try:
-        display_name = (
-            tg_user.username.lower() if tg_user.username
-            else (tg_user.first_name or "user").lower()
-        )
-        user = await db.get_or_create_user(tg_user.id, display_name)
+        user = await db.get_or_create_user_from_tg(tg_user)
     except Exception:
         logger.exception("Could not resolve user %s for chat", tg_user.id)
         return

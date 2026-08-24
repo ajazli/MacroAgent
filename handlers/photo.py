@@ -173,11 +173,7 @@ async def _run_meal_analysis(
 async def _resolve_user(tg_user, message):
     """Auto-register user and return DB row, or send error and return None."""
     try:
-        display_name = (
-            tg_user.username.lower() if tg_user.username
-            else (tg_user.first_name or "user").lower()
-        )
-        return await db.get_or_create_user(tg_user.id, display_name)
+        return await db.get_or_create_user_from_tg(tg_user)
     except Exception:
         logger.exception("DB error auto-registering user %s", tg_user.id)
         await message.reply_text(
@@ -315,10 +311,13 @@ async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_T
     footer = f"✏️ _{formatter.escape(change_summary)}_" if change_summary else "✏️ _Updated_"
     if is_cross_edit:
         # In a group it must be obvious whose log just moved, and who moved it.
-        owner = log_row.get("owner_name") or "someone else"
+        owner_handle = (log_row.get("owner_username") or "").strip()
+        owner = f"@{owner_handle}" if owner_handle else (log_row.get("owner_name") or "someone else")
+        editor_handle = (editor.get("username") or "").strip()
+        editor_name = f"@{editor_handle}" if editor_handle else editor["name"]
         footer += (
             f"\n_{formatter.escape(owner)}'s meal, corrected by "
-            f"{formatter.escape(editor['name'])}_"
+            f"{formatter.escape(editor_name)}_"
         )
     await processing.edit_text(
         formatter.format_meal_analysis(corrected_data) + "\n\n" + footer,

@@ -78,27 +78,39 @@ async def _run_migrations() -> None:
 # User helpers
 # ---------------------------------------------------------------------------
 
-async def get_or_create_user(telegram_id: int, name: str) -> dict:
-    """Return the user row, creating it if it doesn't exist."""
+async def get_or_create_user(
+    telegram_id: int, name: str, username: Optional[str] = None
+) -> dict:
+    """Return the user row, creating it if it doesn't exist.
+
+    username is the Telegram @handle when the person has one, kept apart from
+    name so callers can tell a real mention from a first name.
+    """
     pool = get_pool()
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT id, telegram_id, name, created_at FROM users WHERE telegram_id = $1",
-                telegram_id,
+                "INSERT INTO users (telegram_id, name, username) VALUES ($1, $2, $3) "
+                "ON CONFLICT (telegram_id) DO UPDATE "
+                "SET username = COALESCE(EXCLUDED.username, users.username) "
+                "RETURNING id, telegram_id, name, username, created_at",
+                telegram_id, name, (username or "").lstrip("@").lower() or None,
             )
-            if row is None:
-                row = await conn.fetchrow(
-                    "INSERT INTO users (telegram_id, name) VALUES ($1, $2) "
-                    "ON CONFLICT (telegram_id) DO UPDATE SET name = EXCLUDED.name "
-                    "RETURNING id, telegram_id, name, created_at",
-                    telegram_id,
-                    name,
-                )
             return dict(row)
     except Exception:
         logger.exception("get_or_create_user failed for telegram_id=%s", telegram_id)
         raise
+
+
+async def get_or_create_user_from_tg(tg_user) -> dict:
+    """Upsert from a Telegram user object.
+
+    One place decides how a Telegram account becomes a row, so the handlers stop
+    each deriving the display name slightly differently.
+    """
+    username = (tg_user.username or "").strip() or None
+    name = (username or tg_user.first_name or "user").lower()
+    return await get_or_create_user(tg_user.id, name, username=username)
 
 
 async def get_user_by_telegram_id(telegram_id: int) -> Optional[dict]:
@@ -601,7 +613,7 @@ async def get_log_by_message(chat_id: int, message_id: int) -> Optional[dict]:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT l.id, l.user_id, l.date, l.type, l.data, l.created_at, "
-                "       u.name AS owner_name "
+                "       u.name AS owner_name, u.username AS owner_username "
                 "FROM log_messages lm "
                 "JOIN logs l ON l.id = lm.log_id "
                 "JOIN users u ON u.id = l.user_id "
@@ -658,7 +670,7 @@ async def get_group_members(chat_id: int) -> list[dict]:
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT u.id, u.name, u.telegram_id, gm.display_name "
+                "SELECT u.id, u.name, u.telegram_id, u.username, gm.display_name "
                 "FROM group_members gm JOIN users u ON u.id = gm.user_id "
                 "WHERE gm.chat_id = $1 ORDER BY u.name",
                 chat_id,
@@ -701,7 +713,7 @@ async def get_all_users_meals_today() -> list[dict]:
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT l.id, l.user_id, u.name, u.telegram_id, l.date, l.type, l.data, "
+                "SELECT l.id, l.user_id, u.name, u.username, u.telegram_id, l.date, l.type, l.data, "
                 "       l.created_at, lm.chat_id "
                 "FROM logs l "
                 "JOIN users u ON u.id = l.user_id "

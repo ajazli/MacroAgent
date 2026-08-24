@@ -648,7 +648,6 @@ def format_daily_meals(user_name: str, meal_logs: list) -> str:
 
 def format_weekly_meals(user_name: str, meal_logs: list) -> str:
     """Day-by-day meal overview for the past 7 days with per-day and weekly totals."""
-    import json as _json
     today = today_sgt()
     dates = [today - timedelta(days=i) for i in range(6, -1, -1)]
 
@@ -753,9 +752,14 @@ def format_daily_nutrition_summary(meal_rows: list) -> str:
     if not meal_rows:
         return escape("No meals logged today.")
 
+    def _label(row) -> str:
+        """@handle where there is one — it mentions the person and never collides."""
+        handle = (row.get("username") or "").strip()
+        return f"@{handle}" if handle else row["name"]
+
     by_user: dict = {}
     for row in meal_rows:
-        by_user.setdefault(row["name"], []).append(row)
+        by_user.setdefault(_label(row), []).append(row)
 
     today_str = escape(today_sgt().strftime("%d %b %Y"))
     lines = [f"📊 *Daily Nutrition Summary — {today_str}*", ""]

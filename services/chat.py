@@ -60,6 +60,8 @@ SYSTEM_PROMPT = (
     "answer from your own knowledge; just be clear when you are estimating rather than "
     "reading their data.\n\n"
 
+    "Refer to people by the @handle shown in the snapshot, not their display name.\n\n"
+
     "In a group, the snapshot lists every member of that group and anyone there may ask "
     "about anyone else on it — answer for whoever they name, not just the person asking. "
     "Match names loosely (first name, nickname, @handle). If the name is not on the roster, "
@@ -172,10 +174,13 @@ async def build_group_snapshot(chat_id: int, requester: dict) -> str:
         day = _aggregate_day(by_user.get(member["id"], []))
         # Show the Telegram display name too when it differs, so a question about
         # "Ming Hui" resolves even though the stored name is a username.
+        handle = (member.get("username") or "").strip()
         display = (member.get("display_name") or "").strip()
-        label = member["name"]
-        if display and display.lower() != member["name"].lower():
-            label = f"{member['name']} (also known as: {display})"
+        label = f"@{handle}" if handle else member["name"]
+        # Keep the display name alongside so "how is Ming Hui doing" still resolves,
+        # even though the bot refers to people by handle.
+        if display and display.lower() != label.lstrip("@").lower():
+            label = f"{label} (also known as: {display})"
         marker = " [asking]" if member["id"] == requester["id"] else ""
         if not day["meals"] and not day["steps"] and day["weight"] is None:
             lines.append(f"  {label}{marker}: nothing logged yet")
