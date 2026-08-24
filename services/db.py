@@ -707,19 +707,29 @@ async def get_group_logs_today(chat_id: int) -> list[dict]:
 
 
 async def get_all_users_meals_today() -> list[dict]:
-    """Return today's meal logs joined with user info and the chat_id they were logged in."""
+    """Return today's meal logs joined with user info and the chat_id they were logged in.
+
+    log_messages is keyed by (chat_id, message_id), so one meal accumulates a row
+    per bot message that represents it — the original analysis plus one for every
+    correction. Joining it naively returns that meal once per message and the
+    summary counts it several times over, so DISTINCT ON collapses back to one
+    row per log before the totals are computed.
+    """
     pool = get_pool()
     today = today_sgt()
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT l.id, l.user_id, u.name, u.username, u.telegram_id, l.date, l.type, l.data, "
-                "       l.created_at, lm.chat_id "
-                "FROM logs l "
-                "JOIN users u ON u.id = l.user_id "
-                "JOIN log_messages lm ON lm.log_id = l.id "
-                "WHERE l.date = $1 AND l.type = 'meal' "
-                "ORDER BY u.name, l.created_at",
+                "SELECT * FROM ("
+                "  SELECT DISTINCT ON (l.id) "
+                "         l.id, l.user_id, u.name, u.username, u.telegram_id, l.date, l.type, "
+                "         l.data, l.created_at, lm.chat_id "
+                "  FROM logs l "
+                "  JOIN users u ON u.id = l.user_id "
+                "  JOIN log_messages lm ON lm.log_id = l.id "
+                "  WHERE l.date = $1 AND l.type = 'meal' "
+                "  ORDER BY l.id, lm.message_id"
+                ") m ORDER BY m.name, m.created_at",
                 today,
             )
             return [dict(r) for r in rows]
