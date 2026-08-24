@@ -34,6 +34,85 @@ async def _ensure_registered(update: Update) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Looking up another member
+# ---------------------------------------------------------------------------
+
+def _member_label(member: dict) -> str:
+    """How to refer to someone: their Telegram display name if we have it."""
+    return (member.get("display_name") or "").strip() or member["name"]
+
+
+def _match_members(members: list, query: str) -> list:
+    """Find roster entries matching a typed name.
+
+    People refer to each other by first name, so this tries exact, then prefix,
+    then substring, against the stored username, the Telegram display name, and
+    each word of that display name. The first tier that hits wins, so an exact
+    match is never diluted by looser ones.
+    """
+    q = query.lower().strip()
+    if not q:
+        return []
+
+    def fields(member: dict) -> list:
+        out = [(member.get("name") or "").lower()]
+        display = (member.get("display_name") or "").lower()
+        if display:
+            out.append(display)
+            out.extend(display.split())
+        return [f for f in out if f]
+
+    for test in (
+        lambda f: f == q,
+        lambda f: f.startswith(q),
+        lambda f: q in f,
+    ):
+        hits, seen = [], set()
+        for member in members:
+            if member["id"] not in seen and any(test(f) for f in fields(member)):
+                hits.append(member)
+                seen.add(member["id"])
+        if hits:
+            return hits
+    return []
+
+
+async def _resolve_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Who is this data command being asked about?
+
+    With no argument, the caller. With a name, that person — but only if they are
+    on this chat's roster, so these commands honour the same group boundary as
+    everything else. Returns (user, error_text); exactly one is None.
+    """
+    caller = await _ensure_registered(update)
+    args = context.args or []
+    if not args:
+        return caller, None
+
+    chat = update.effective_chat
+    if not chat or chat.type not in ("group", "supergroup"):
+        return None, formatter.escape(
+            "Looking someone up only works in a group chat."
+        )
+
+    query = " ".join(args).lstrip("@").strip()
+    members = await db.get_group_members(chat.id)
+    if not members:
+        return None, formatter.escape(
+            "I don't know who's in this group yet — once people log something here I will."
+        )
+
+    matches = _match_members(members, query)
+    if not matches:
+        known = ", ".join(sorted(_member_label(m) for m in members))
+        return None, formatter.escape(f"No one here matches '{query}'.\nIn this group: {known}")
+    if len(matches) > 1:
+        names = ", ".join(sorted(_member_label(m) for m in matches))
+        return None, formatter.escape(f"'{query}' could be {names}. Which one?")
+    return matches[0], None
+
+
+# ---------------------------------------------------------------------------
 # /start
 # ---------------------------------------------------------------------------
 
@@ -240,12 +319,16 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 # ---------------------------------------------------------------------------
 
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/today — your summary. /today <name> — a group member's summary."""
     try:
-        user = await _ensure_registered(update)
+        user, error = await _resolve_target_user(update, context)
+        if error:
+            await update.message.reply_text(error, parse_mode=ParseMode.MARKDOWN_V2)
+            return
         logs = await db.get_logs_for_user_today(user["id"])
         prev_weight = await db.get_last_weight_before_today(user["id"])
         streak = await db.get_log_streak(user["id"])
-        reply = formatter.format_today_summary(user["name"], logs, prev_weight_kg=prev_weight, streak=streak)
+        reply = formatter.format_today_summary(_member_label(user), logs, prev_weight_kg=prev_weight, streak=streak)
         await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception:
         logger.exception("Error in cmd_today for telegram_id=%s", update.effective_user.id)
@@ -494,11 +577,14 @@ async def cmd_myreport(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     from datetime import timedelta
     from services.tz import today_sgt
     try:
-        user = await _ensure_registered(update)
+        user, error = await _resolve_target_user(update, context)
+        if error:
+            await update.message.reply_text(error, parse_mode=ParseMode.MARKDOWN_V2)
+            return
         today = today_sgt()
         start = today - timedelta(days=27)
         logs = await db.get_logs_for_user_date_range(user["id"], start, today)
-        reply = formatter.format_report(user["name"], logs, days=7)
+        reply = formatter.format_report(_member_label(user), logs, days=7)
         await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception:
         logger.exception("Error in cmd_myreport for telegram_id=%s", update.effective_user.id)
@@ -530,10 +616,14 @@ async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # ---------------------------------------------------------------------------
 
 async def cmd_dailymeals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/dailymeals — your meals. /dailymeals <name> — a group member's meals."""
     try:
-        user = await _ensure_registered(update)
+        user, error = await _resolve_target_user(update, context)
+        if error:
+            await update.message.reply_text(error, parse_mode=ParseMode.MARKDOWN_V2)
+            return
         meal_logs = await db.get_logs_for_user_today(user["id"], log_type="meal")
-        reply = formatter.format_daily_meals(user["name"], meal_logs)
+        reply = formatter.format_daily_meals(_member_label(user), meal_logs)
         await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception:
         logger.exception("Error in cmd_dailymeals for telegram_id=%s", update.effective_user.id)
@@ -549,11 +639,14 @@ async def cmd_dailymeals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def cmd_weeklymeals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        user = await _ensure_registered(update)
+        user, error = await _resolve_target_user(update, context)
+        if error:
+            await update.message.reply_text(error, parse_mode=ParseMode.MARKDOWN_V2)
+            return
         today = today_sgt()
         start = today - timedelta(days=6)
         meal_logs = await db.get_logs_for_user_date_range(user["id"], start, today, log_type="meal")
-        reply = formatter.format_weekly_meals(user["name"], meal_logs)
+        reply = formatter.format_weekly_meals(_member_label(user), meal_logs)
         await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception:
         logger.exception("Error in cmd_weeklymeals for telegram_id=%s", update.effective_user.id)
