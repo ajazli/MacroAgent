@@ -18,12 +18,15 @@ The gate runs in handler group -2, ahead of every other handler, and raises
 ApplicationHandlerStop so an unapproved chat reaches nothing at all — no Claude
 calls, no replies.
 
+One-to-one chats are owner-only. Everyone else works with the bot in their
+program group, so a DM from anyone else is turned away with a pointer there
+rather than an approval request — approving them would not grant a DM anyway.
+
 In a group it answers only someone actually trying to use it — a meal photo, a
 command, an @mention, a reply to the bot. Those earn a short "not approved yet"
 instead of an analysis, because silence there just looks broken. Ordinary
 chatter gets nothing: answering that is what made the bot butt into
-conversations it had no business in. A one-to-one chat always gets an answer,
-since messaging the bot directly is deliberate. The owner is told either way.
+conversations it had no business in. The owner is told either way.
 
 Revoking is distinct from never having been approved: a revoked group or person
 is dropped in complete silence, with no repeat notification about a decision the
@@ -61,9 +64,9 @@ _notified_owner: set = set()
 _last_notice: dict = {}
 NOTICE_COOLDOWN_SECONDS = 600
 
-DENIED_MESSAGE = (
-    "🔒 This bot is private. I've let the owner know you'd like access — "
-    "they can approve you from their end."
+PRIVATE_ONLY_MESSAGE = (
+    "🔒 I only work in group chats. Head to your program group and post your "
+    "meal photo there — I'll analyse it for you."
 )
 
 PENDING_CHAT_MESSAGE = (
@@ -236,6 +239,14 @@ async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     is_group = chat.type in ("group", "supergroup")
 
+    # One-to-one chats are for owners only. Everyone else uses the bot where
+    # their program lives, so there is nothing to approve them for here — a
+    # notification would just offer the owner a decision that changes nothing.
+    if not is_group and not owner:
+        logger.info("Blocked private chat from non-owner %s", tg_user.id)
+        await _say(update, PRIVATE_ONLY_MESSAGE, ("dm", tg_user.id))
+        raise ApplicationHandlerStop
+
     if is_group:
         # Register first so the group shows up in /access. New rows are unapproved.
         try:
@@ -276,7 +287,7 @@ async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if user.get("revoked_at") is None:
             logger.info("Blocked new person %s (%s)", tg_user.id, user.get("name"))
             handle = f"@{user['username']}" if user.get("username") else user.get("name", "unknown")
-            where = chat.title if is_group else "a private chat"
+            where = chat.title or "a group"
             await _tell_owner(
                 context,
                 f"🔒 New person wants access: {handle}\n"
@@ -285,9 +296,7 @@ async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 f"Approve with:  /approve {tg_user.id}",
                 ("user", tg_user.id),
             )
-            if not is_group:
-                await _say(update, DENIED_MESSAGE, ("user", tg_user.id))
-            elif _is_use_attempt(update.effective_message, context.bot):
+            if _is_use_attempt(update.effective_message, context.bot):
                 await _say(update, PENDING_USER_MESSAGE, ("user", tg_user.id))
         else:
             logger.debug("Ignoring revoked person %s", tg_user.id)
