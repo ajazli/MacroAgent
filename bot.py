@@ -40,6 +40,9 @@ async def _post_init(application: Application) -> None:
     await init_pool()
     logger.info("DB pool ready.")
 
+    from handlers.access import log_access_mode
+    log_access_mode()
+
     # Start scheduler — discovers registered groups from DB at job runtime
     try:
         start_scheduler(application.bot)
@@ -190,6 +193,7 @@ def build_application() -> Application:
     )
     from handlers.photo import handle_photo, cmd_meal
     from handlers.chat import handle_text, cmd_ask
+    from handlers.access import access_gate, cmd_approve, cmd_revoke, cmd_access
     from handlers.instructor import (
         cmd_stats, cmd_report, cmd_week, cmd_meals,
         cmd_schedule, cmd_scheduleweekly, cmd_stopweekly, cmd_checkinstatus, cmd_clearschedule,
@@ -202,6 +206,9 @@ def build_application() -> Application:
     # -----------------------------------------------------------------------
     app.add_handler(CommandHandler("start",       cmd_start))
     app.add_handler(CommandHandler("ask",         cmd_ask))
+    app.add_handler(CommandHandler("approve",     cmd_approve))
+    app.add_handler(CommandHandler("revoke",      cmd_revoke))
+    app.add_handler(CommandHandler("access",      cmd_access))
     app.add_handler(CommandHandler("health",      cmd_health))
     app.add_handler(CommandHandler("today",       cmd_today))
     app.add_handler(CommandHandler("weight",      cmd_weight))
@@ -235,6 +242,9 @@ def build_application() -> Application:
     # Conversations — must be registered before the photo handler
     app.add_handler(build_fitness_conversation())
     app.add_handler(build_checkin_conversation())
+
+    # Access gate first: an unapproved chat or person reaches nothing at all.
+    app.add_handler(MessageHandler(filters.ALL, access_gate), group=-2)
 
     # Auto-register any group the bot is active in.
     # Group -1 ensures this runs on every group update before command handlers.

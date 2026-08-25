@@ -93,7 +93,7 @@ async def get_or_create_user(
                 "INSERT INTO users (telegram_id, name, username) VALUES ($1, $2, $3) "
                 "ON CONFLICT (telegram_id) DO UPDATE "
                 "SET username = COALESCE(EXCLUDED.username, users.username) "
-                "RETURNING id, telegram_id, name, username, created_at",
+                "RETURNING id, telegram_id, name, username, approved, created_at",
                 telegram_id, name, (username or "").lstrip("@").lower() or None,
             )
             return dict(row)
@@ -704,6 +704,82 @@ async def get_group_logs_today(chat_id: int) -> list[dict]:
     except Exception:
         logger.exception("get_group_logs_today failed for chat=%s", chat_id)
         return []
+
+
+async def is_group_approved(chat_id: int) -> bool:
+    """Whether this group may use the bot. Unknown groups are not approved."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            val = await conn.fetchval("SELECT approved FROM groups WHERE chat_id = $1", chat_id)
+            return bool(val)
+    except Exception:
+        logger.exception("is_group_approved failed for chat=%s", chat_id)
+        # Fail open: a database blip must not lock everyone out of a working bot.
+        return True
+
+
+async def set_group_approved(chat_id: int, approved: bool) -> bool:
+    """Approve or revoke a group. Returns False if the group is unknown."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE groups SET approved = $2 WHERE chat_id = $1", chat_id, approved)
+            return result.endswith(" 1")
+    except Exception:
+        logger.exception("set_group_approved failed for chat=%s", chat_id)
+        return False
+
+
+async def set_user_approved(telegram_id: int, approved: bool) -> bool:
+    """Approve or revoke a user by Telegram id. Returns False if unknown."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE users SET approved = $2 WHERE telegram_id = $1", telegram_id, approved)
+            return result.endswith(" 1")
+    except Exception:
+        logger.exception("set_user_approved failed for telegram_id=%s", telegram_id)
+        return False
+
+
+async def get_user_by_handle_or_id(token: str) -> Optional[dict]:
+    """Look a user up by @handle, stored name, or numeric Telegram id."""
+    pool = get_pool()
+    cleaned = token.strip().lstrip("@").lower()
+    try:
+        async with pool.acquire() as conn:
+            if cleaned.isdigit():
+                row = await conn.fetchrow(
+                    "SELECT id, telegram_id, name, username, approved FROM users "
+                    "WHERE telegram_id = $1", int(cleaned))
+                if row:
+                    return dict(row)
+            row = await conn.fetchrow(
+                "SELECT id, telegram_id, name, username, approved FROM users "
+                "WHERE lower(username) = $1 OR lower(name) = $1", cleaned)
+            return dict(row) if row else None
+    except Exception:
+        logger.exception("get_user_by_handle_or_id failed for %s", token)
+        return None
+
+
+async def get_access_overview() -> tuple[list[dict], list[dict]]:
+    """Return (groups, unapproved_users) for the owner's access listing."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            groups = await conn.fetch(
+                "SELECT chat_id, title, approved FROM groups ORDER BY approved DESC, title")
+            users = await conn.fetch(
+                "SELECT telegram_id, name, username FROM users "
+                "WHERE approved = FALSE ORDER BY name")
+            return [dict(r) for r in groups], [dict(r) for r in users]
+    except Exception:
+        logger.exception("get_access_overview failed")
+        return [], []
 
 
 async def get_all_users_meals_today() -> list[dict]:
