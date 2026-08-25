@@ -1,6 +1,11 @@
 """
 Access control — who is allowed to use the bot.
 
+There can be several owners. OWNER_TELEGRAM_ID names the root owner(s) — a
+comma-separated list is accepted — and they cannot be demoted by a command, so
+there is always a way back in. Anyone else is promoted at runtime with
+/addowner, which takes an @handle rather than a numeric id.
+
 Everything that existed when this shipped was grandfathered in (see migration
 010), so nothing that was working stopped. From then on:
 
@@ -72,37 +77,76 @@ PENDING_USER_MESSAGE = (
 )
 
 
-def owner_id() -> Optional[int]:
+# Owners promoted at runtime, cached so the gate does not hit the database on
+# every single message. Reloaded at startup and whenever it changes.
+_db_owner_ids: set = set()
+
+
+def _env_owner_ids() -> set:
+    """Root owners from the environment. Accepts a comma or space separated list."""
+    out = set()
     for name in _OWNER_ENV_VARS:
         raw = os.environ.get(name, "").strip()
-        if raw:
+        if not raw:
+            continue
+        for part in raw.replace(",", " ").split():
             try:
-                return int(raw)
+                out.add(int(part))
             except ValueError:
-                logger.warning("%s is set but is not a number: %r", name, raw)
-    return None
+                logger.warning("%s contains a non-numeric id: %r", name, part)
+        if out:
+            break  # OWNER_TELEGRAM_ID wins outright when it is set
+    return out
+
+
+async def refresh_owner_cache() -> None:
+    """Reload runtime owners from the database."""
+    global _db_owner_ids
+    try:
+        _db_owner_ids = set(await db.get_owner_telegram_ids())
+        logger.info("Owner cache loaded — %d promoted owner(s)", len(_db_owner_ids))
+    except Exception:
+        logger.warning("Could not load owner cache", exc_info=True)
+
+
+def owner_ids() -> set:
+    """Everyone who can administer the bot: env root owners plus promoted ones."""
+    return _env_owner_ids() | _db_owner_ids
+
+
+def owner_id() -> Optional[int]:
+    """A single owner id, for code that just needs to know whether one exists."""
+    ids = owner_ids()
+    return min(ids) if ids else None
+
+
+def is_root_owner(telegram_id: int) -> bool:
+    """Root owners come from the environment and cannot be demoted by a command."""
+    return telegram_id in _env_owner_ids()
 
 
 def is_owner(telegram_id: int) -> bool:
-    oid = owner_id()
-    return oid is not None and oid == telegram_id
+    return telegram_id in owner_ids()
 
 
 def log_access_mode() -> None:
     """Say at startup whether the gate is on, so a missing env var is visible."""
-    oid = owner_id()
-    if oid is None:
+    env_ids = _env_owner_ids()
+    if not env_ids:
         logger.warning(
             "ACCESS CONTROL DISABLED — no OWNER_TELEGRAM_ID (or INSTRUCTOR_TELEGRAM_ID) set, "
             "so anyone who finds this bot can use it. Set one to require approval."
         )
     else:
-        logger.info("Access control active — owner is telegram_id=%s", oid)
+        logger.info(
+            "Access control active — root owner(s): %s; promoted: %s",
+            sorted(env_ids), sorted(_db_owner_ids) or "none",
+        )
 
 
 # Commands that manage access itself. These keep working for the owner in any
 # chat, so revoking a group can never strand them with no way back in.
-_ACCESS_COMMANDS = ("/approve", "/revoke", "/access")
+_ACCESS_COMMANDS = ("/approve", "/revoke", "/access", "/addowner", "/removeowner")
 
 
 def _is_access_command(message) -> bool:
@@ -111,15 +155,16 @@ def _is_access_command(message) -> bool:
 
 
 async def _tell_owner(context, text: str, key) -> None:
-    """DM the owner once about a blocked chat or person."""
-    oid = owner_id()
-    if oid is None or key in _notified_owner:
+    """DM every owner once about a blocked chat or person."""
+    ids = owner_ids()
+    if not ids or key in _notified_owner:
         return
     _notified_owner.add(key)
-    try:
-        await context.bot.send_message(chat_id=oid, text=text)
-    except Exception:
-        logger.warning("Could not notify owner %s about %s", oid, key, exc_info=True)
+    for oid in sorted(ids):
+        try:
+            await context.bot.send_message(chat_id=oid, text=text)
+        except Exception:
+            logger.warning("Could not notify owner %s about %s", oid, key, exc_info=True)
 
 
 def _is_use_attempt(message, bot) -> bool:
@@ -173,7 +218,7 @@ async def _say(update: Update, text: str, key) -> None:
 
 async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Block anything not approved. Runs before every other handler."""
-    if owner_id() is None:
+    if not _env_owner_ids():
         return  # Gate disabled — see log_access_mode()
 
     tg_user = update.effective_user
@@ -396,7 +441,7 @@ async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text(_NOT_OWNER)
         return
 
-    if owner_id() is None:
+    if not _env_owner_ids():
         await message.reply_text("Access control is disabled — no owner id configured.")
         return
 
@@ -404,10 +449,23 @@ async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     allowed = [g for g in groups if g["approved"]]
     blocked = [g for g in groups if not g["approved"]]
 
+    owners = await db.get_owners()
+    root = sorted(_env_owner_ids())
+
     lines = [
         f"🔑 *Access* — {len(allowed)} group\\(s\\) allowed, {len(blocked)} blocked",
         "",
+        "👑 *Owners*",
     ]
+    for rid in root:
+        lines.append(formatter.escape(str(rid)) + formatter.escape("  (root, set in env)"))
+    for o in owners:
+        handle = f"@{o['username']}" if o.get("username") else o["name"]
+        if o["telegram_id"] in root:
+            continue
+        lines.append(formatter.escape(handle))
+        lines.append("  " + _code(f"/removeowner {o['telegram_id']}"))
+    lines.append("")
 
     if allowed:
         lines.append("✅ *Allowed*")
@@ -433,3 +491,62 @@ async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     lines.append(formatter.escape("Tap a command to copy it. /revoke also takes a group name."))
     await _send_chunked(message, [ln for ln in lines])
+
+
+async def cmd_addowner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/addowner <@handle|telegram_id> — give someone full owner rights."""
+    await _set_owner(update, context, True)
+
+
+async def cmd_removeowner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/removeowner <@handle|telegram_id> — take owner rights away."""
+    await _set_owner(update, context, False)
+
+
+async def _set_owner(update: Update, context: ContextTypes.DEFAULT_TYPE, promote: bool) -> None:
+    message = update.effective_message
+    if not is_owner(update.effective_user.id):
+        await message.reply_text(_NOT_OWNER)
+        return
+
+    args = context.args or []
+    if not args:
+        await message.reply_text(
+            f"Usage: /{'addowner' if promote else 'removeowner'} <@handle or telegram_id>\n\n"
+            f"They need to have messaged the bot at least once so I know who they are.\n"
+            f"/access lists the current owners."
+        )
+        return
+
+    token = " ".join(args).strip()
+    user = await db.get_user_by_handle_or_id(token)
+    if user is None:
+        await message.reply_text(
+            f"No one matching '{token}'. They need to have messaged the bot at least once, "
+            f"or use their numeric telegram_id."
+        )
+        return
+
+    handle = f"@{user['username']}" if user.get("username") else user["name"]
+
+    # A root owner is defined in the environment, so a command cannot unset them.
+    # Without this, demoting everyone would leave nobody able to administer the bot.
+    if not promote and is_root_owner(user["telegram_id"]):
+        await message.reply_text(
+            f"{handle} is a root owner set in OWNER_TELEGRAM_ID and can't be removed here. "
+            f"Change the environment variable to drop them."
+        )
+        return
+
+    if not await db.set_user_owner(user["telegram_id"], promote):
+        await message.reply_text(f"⚠️ Could not update {handle}.")
+        return
+
+    await refresh_owner_cache()
+    if promote:
+        await message.reply_text(
+            f"👑 {handle} is now an owner — they can approve, revoke and manage owners, "
+            f"and they'll get access requests too."
+        )
+    else:
+        await message.reply_text(f"✅ {handle} is no longer an owner.")

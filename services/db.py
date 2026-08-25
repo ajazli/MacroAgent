@@ -93,7 +93,7 @@ async def get_or_create_user(
                 "INSERT INTO users (telegram_id, name, username) VALUES ($1, $2, $3) "
                 "ON CONFLICT (telegram_id) DO UPDATE "
                 "SET username = COALESCE(EXCLUDED.username, users.username) "
-                "RETURNING id, telegram_id, name, username, approved, revoked_at, created_at",
+                "RETURNING id, telegram_id, name, username, approved, revoked_at, is_owner, created_at",
                 telegram_id, name, (username or "").lstrip("@").lower() or None,
             )
             return dict(row)
@@ -765,17 +765,62 @@ async def get_user_by_handle_or_id(token: str) -> Optional[dict]:
         async with pool.acquire() as conn:
             if cleaned.isdigit():
                 row = await conn.fetchrow(
-                    "SELECT id, telegram_id, name, username, approved, revoked_at FROM users "
+                    "SELECT id, telegram_id, name, username, approved, revoked_at, is_owner FROM users "
                     "WHERE telegram_id = $1", int(cleaned))
                 if row:
                     return dict(row)
             row = await conn.fetchrow(
-                "SELECT id, telegram_id, name, username, approved, revoked_at FROM users "
+                "SELECT id, telegram_id, name, username, approved, revoked_at, is_owner FROM users "
                 "WHERE lower(username) = $1 OR lower(name) = $1", cleaned)
             return dict(row) if row else None
     except Exception:
         logger.exception("get_user_by_handle_or_id failed for %s", token)
         return None
+
+
+async def get_owner_telegram_ids() -> list[int]:
+    """Telegram ids of everyone promoted to owner in the database."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT telegram_id FROM users WHERE is_owner = TRUE")
+            return [r["telegram_id"] for r in rows]
+    except Exception:
+        logger.exception("get_owner_telegram_ids failed")
+        return []
+
+
+async def set_user_owner(telegram_id: int, is_owner: bool) -> bool:
+    """Promote or demote an owner. Promotion also approves them, since an owner
+    who is still awaiting approval would be a contradiction."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            if is_owner:
+                result = await conn.execute(
+                    "UPDATE users SET is_owner = TRUE, approved = TRUE, revoked_at = NULL "
+                    "WHERE telegram_id = $1", telegram_id)
+            else:
+                result = await conn.execute(
+                    "UPDATE users SET is_owner = FALSE WHERE telegram_id = $1", telegram_id)
+            return result.endswith(" 1")
+    except Exception:
+        logger.exception("set_user_owner failed for telegram_id=%s", telegram_id)
+        return False
+
+
+async def get_owners() -> list[dict]:
+    """Owner rows for display."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT telegram_id, name, username FROM users "
+                "WHERE is_owner = TRUE ORDER BY lower(name)")
+            return [dict(r) for r in rows]
+    except Exception:
+        logger.exception("get_owners failed")
+        return []
 
 
 async def get_access_overview() -> tuple[list[dict], list[dict]]:

@@ -1,10 +1,9 @@
 """
 Instructor-only command handlers: /stats, /report, /week, /meals
-Access is gated by INSTRUCTOR_TELEGRAM_ID environment variable.
+Access follows bot ownership — see handlers/access.py.
 """
 
 import logging
-import os
 from datetime import date, datetime, timedelta
 
 from telegram import Update
@@ -20,11 +19,13 @@ UNAUTHORIZED_MSG = formatter.escape("🚫 This command is only available to the 
 
 
 def _is_instructor(telegram_id: int) -> bool:
-    instructor_id = os.environ.get("INSTRUCTOR_TELEGRAM_ID", "")
-    try:
-        return int(instructor_id) == telegram_id
-    except (ValueError, TypeError):
-        return False
+    """Instructor access follows bot ownership.
+
+    Keeping a second, separate notion of "authorised" meant a newly promoted
+    owner could approve groups but was refused by /stats and /report.
+    """
+    from handlers.access import is_owner
+    return is_owner(telegram_id)
 
 
 def _guard(func):

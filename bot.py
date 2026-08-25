@@ -40,7 +40,8 @@ async def _post_init(application: Application) -> None:
     await init_pool()
     logger.info("DB pool ready.")
 
-    from handlers.access import log_access_mode
+    from handlers.access import log_access_mode, refresh_owner_cache
+    await refresh_owner_cache()
     log_access_mode()
 
     # Start scheduler — discovers registered groups from DB at job runtime
@@ -193,7 +194,9 @@ def build_application() -> Application:
     )
     from handlers.photo import handle_photo, cmd_meal
     from handlers.chat import handle_text, cmd_ask
-    from handlers.access import access_gate, cmd_approve, cmd_revoke, cmd_access
+    from handlers.access import (
+        access_gate, cmd_approve, cmd_revoke, cmd_access, cmd_addowner, cmd_removeowner,
+    )
     from handlers.instructor import (
         cmd_stats, cmd_report, cmd_week, cmd_meals,
         cmd_schedule, cmd_scheduleweekly, cmd_stopweekly, cmd_checkinstatus, cmd_clearschedule,
@@ -209,6 +212,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("approve",     cmd_approve))
     app.add_handler(CommandHandler("revoke",      cmd_revoke))
     app.add_handler(CommandHandler("access",      cmd_access))
+    app.add_handler(CommandHandler("addowner",    cmd_addowner))
+    app.add_handler(CommandHandler("removeowner", cmd_removeowner))
     app.add_handler(CommandHandler("health",      cmd_health))
     app.add_handler(CommandHandler("today",       cmd_today))
     app.add_handler(CommandHandler("weight",      cmd_weight))
