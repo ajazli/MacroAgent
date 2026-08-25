@@ -13,11 +13,12 @@ The gate runs in handler group -2, ahead of every other handler, and raises
 ApplicationHandlerStop so an unapproved chat reaches nothing at all — no Claude
 calls, no replies.
 
-It stays silent in groups. Most blocked messages there are ordinary chatter the
-bot would have ignored anyway, so answering them adds noise where there was none
-and announces the bot to a room not meant to have it. Only a one-to-one chat gets
-the "this bot is private" notice, because messaging the bot directly is a
-deliberate act that deserves an answer. The owner is told either way.
+In a group it answers only someone actually trying to use it — a meal photo, a
+command, an @mention, a reply to the bot. Those earn a short "not approved yet"
+instead of an analysis, because silence there just looks broken. Ordinary
+chatter gets nothing: answering that is what made the bot butt into
+conversations it had no business in. A one-to-one chat always gets an answer,
+since messaging the bot directly is deliberate. The owner is told either way.
 
 Revoking is distinct from never having been approved: a revoked group or person
 is dropped in complete silence, with no repeat notification about a decision the
@@ -30,6 +31,7 @@ env-var change and a redeploy to undo, which is worse than a gap in cover.
 
 import logging
 import os
+import time
 from typing import Optional
 
 from telegram import Update
@@ -44,14 +46,29 @@ logger = logging.getLogger(__name__)
 # existing deployments keep working without an env change.
 _OWNER_ENV_VARS = ("OWNER_TELEGRAM_ID", "INSTRUCTOR_TELEGRAM_ID")
 
-# One notice per chat and per user per process, so a blocked group cannot turn
-# into a notification loop for either party.
-_notified_chats: set = set()
+# The owner hears about each new chat or person once per process. Re-nagging them
+# about something they have chosen to ignore is not useful.
 _notified_owner: set = set()
+
+# In-chat notices are rate limited rather than one-shot, so a second person
+# trying an hour later still learns why nothing happened, without the bot
+# answering every photo in a room it is not approved for.
+_last_notice: dict = {}
+NOTICE_COOLDOWN_SECONDS = 600
 
 DENIED_MESSAGE = (
     "🔒 This bot is private. I've let the owner know you'd like access — "
     "they can approve you from their end."
+)
+
+PENDING_CHAT_MESSAGE = (
+    "🔒 I'm not approved for this chat yet, so I can't analyse that. "
+    "I've asked the owner — once they approve it, send the photo again."
+)
+
+PENDING_USER_MESSAGE = (
+    "🔒 You're not approved to use me yet. I've let the owner know — "
+    "once they approve you, try again."
 )
 
 
@@ -105,23 +122,53 @@ async def _tell_owner(context, text: str, key) -> None:
         logger.warning("Could not notify owner %s about %s", oid, key, exc_info=True)
 
 
-async def _deny_in_private(update: Update, key) -> None:
-    """Tell someone the bot is private — only ever in a one-to-one chat.
+def _is_use_attempt(message, bot) -> bool:
+    """Is this someone actually trying to use the bot, rather than just talking?
 
-    In a group the gate stays silent. Most blocked messages are ordinary chatter
-    the bot would have ignored anyway, so replying to them adds noise where there
-    was none and announces the bot to a room that is not supposed to have it.
+    A meal photo, a command, an @mention or a reply to the bot are all deliberate.
+    Getting silence for those looks broken, so they earn an explanation. Ordinary
+    chatter does not — answering that is what made the bot butt into conversations
+    it had no business in.
     """
-    if key in _notified_chats:
-        return
-    _notified_chats.add(key)
-    message = update.effective_message
     if message is None:
+        return False
+    if getattr(message, "photo", None):
+        return True
+
+    text = (getattr(message, "text", None) or getattr(message, "caption", None) or "")
+    if text.strip().startswith("/"):
+        return True
+
+    username = (getattr(bot, "username", "") or "").lower()
+    if username and f"@{username}" in text.lower():
+        return True
+
+    replied = getattr(message, "reply_to_message", None)
+    if replied is not None and getattr(replied, "from_user", None) is not None:
+        if replied.from_user.id == bot.id:
+            return True
+    return False
+
+
+def _notice_due(key) -> bool:
+    """Rate limit in-chat notices to one per key per NOTICE_COOLDOWN_SECONDS."""
+    now = time.monotonic()
+    last = _last_notice.get(key)
+    if last is not None and (now - last) < NOTICE_COOLDOWN_SECONDS:
+        return False
+    _last_notice[key] = now
+    return True
+
+
+async def _say(update: Update, text: str, key) -> None:
+    """Send an in-chat notice, at most once per key per cooldown."""
+    message = update.effective_message
+    if message is None or not _notice_due(key):
         return
     try:
-        await message.reply_text(DENIED_MESSAGE)
+        await message.reply_text(text)
     except Exception:
-        logger.debug("Could not send denial notice", exc_info=True)
+        logger.debug("Could not send access notice", exc_info=True)
 
 
 async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -154,7 +201,7 @@ async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         state = await db.get_group_access(chat.id)
         if not state.get("approved"):
             if state.get("revoked_at") is None:
-                logger.info("Blocked new group %s (%s)", chat.id, chat.title)
+                logger.info("Blocked pending group %s (%s)", chat.id, chat.title)
                 await _tell_owner(
                     context,
                     f"🔒 New group wants access: {chat.title or 'untitled'}\n"
@@ -162,6 +209,11 @@ async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     f"Send /approve in that group to allow it, or ignore this to keep it blocked.",
                     ("chat", chat.id),
                 )
+                # Awaiting approval: explain, but only to someone actually trying
+                # to use the bot. A revoked group gets nothing at all — the owner
+                # turned it off on purpose and does not need it advertised.
+                if _is_use_attempt(update.effective_message, context.bot):
+                    await _say(update, PENDING_CHAT_MESSAGE, ("chat", chat.id))
             else:
                 logger.debug("Ignoring revoked group %s (%s)", chat.id, chat.title)
             raise ApplicationHandlerStop
@@ -189,7 +241,9 @@ async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 ("user", tg_user.id),
             )
             if not is_group:
-                await _deny_in_private(update, ("user", tg_user.id))
+                await _say(update, DENIED_MESSAGE, ("user", tg_user.id))
+            elif _is_use_attempt(update.effective_message, context.bot):
+                await _say(update, PENDING_USER_MESSAGE, ("user", tg_user.id))
         else:
             logger.debug("Ignoring revoked person %s", tg_user.id)
         raise ApplicationHandlerStop
