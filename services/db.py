@@ -784,10 +784,11 @@ async def get_access_overview() -> tuple[list[dict], list[dict]]:
     try:
         async with pool.acquire() as conn:
             groups = await conn.fetch(
-                "SELECT chat_id, title, approved FROM groups ORDER BY approved DESC, title")
+                "SELECT chat_id, title, approved FROM groups "
+                "ORDER BY approved DESC, lower(title)")
             users = await conn.fetch(
                 "SELECT telegram_id, name, username FROM users "
-                "WHERE approved = FALSE ORDER BY name")
+                "WHERE approved = FALSE ORDER BY lower(name)")
             return [dict(r) for r in groups], [dict(r) for r in users]
     except Exception:
         logger.exception("get_access_overview failed")

@@ -256,10 +256,52 @@ async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 _NOT_OWNER = "🔒 Only the bot owner can manage access."
 
 
+def _code(text: str) -> str:
+    """A MarkdownV2 code span. Content inside one must NOT be escaped, or a group
+    id like -100123 renders with visible backslashes and cannot be copied."""
+    return "`" + str(text).replace("\\", "").replace("`", "") + "`"
+
+
+async def _resolve_access_target(token: str):
+    """Work out whether a token names a group or a person.
+
+    Telegram group ids are negative and user ids positive, which makes the common
+    case unambiguous. Bare text tries a person first, then a group title, so the
+    names shown by /access can be typed straight back.
+
+    Returns (kind, value) where kind is "group", "user", "ambiguous" or None.
+    """
+    groups, _ = await db.get_access_overview()
+    cleaned = token.strip()
+
+    if cleaned.startswith("-") and cleaned.lstrip("-").isdigit():
+        chat_id = int(cleaned)
+        for g in groups:
+            if g["chat_id"] == chat_id:
+                return "group", g
+        return None, None
+
+    if cleaned.startswith("@") or cleaned.isdigit():
+        user = await db.get_user_by_handle_or_id(cleaned)
+        return ("user", user) if user else (None, None)
+
+    user = await db.get_user_by_handle_or_id(cleaned)
+    if user:
+        return "user", user
+
+    matches = [g for g in groups if cleaned.lower() in (g["title"] or "").lower()]
+    if len(matches) == 1:
+        return "group", matches[0]
+    if len(matches) > 1:
+        return "ambiguous", matches
+    return None, None
+
+
 async def _set_access(update: Update, context: ContextTypes.DEFAULT_TYPE, approved: bool) -> None:
     message = update.effective_message
     chat = update.effective_chat
     verb = "Approved" if approved else "Revoked"
+    cmd = "approve" if approved else "revoke"
 
     if not is_owner(update.effective_user.id):
         await message.reply_text(_NOT_OWNER)
@@ -267,14 +309,16 @@ async def _set_access(update: Update, context: ContextTypes.DEFAULT_TYPE, approv
 
     args = context.args or []
 
-    # No argument in a group means "this group".
+    # No argument inside a group means "this group".
     if not args:
         if chat.type not in ("group", "supergroup"):
             await message.reply_text(
                 f"Usage:\n"
-                f"  /{'approve' if approved else 'revoke'} — in a group, {verb.lower()} that group\n"
-                f"  /{'approve' if approved else 'revoke'} <@handle or telegram_id> — for a person\n\n"
-                f"See everything with /access."
+                f"  /{cmd} — inside a group, {cmd} that group\n"
+                f"  /{cmd} <group id>  e.g. /{cmd} -1001234567890\n"
+                f"  /{cmd} <group name>  e.g. /{cmd} Jazz IPPT\n"
+                f"  /{cmd} <@handle or telegram_id> — for a person\n\n"
+                f"/access lists everything with the exact command for each."
             )
             return
         ok = await db.set_group_approved(chat.id, approved)
@@ -284,20 +328,37 @@ async def _set_access(update: Update, context: ContextTypes.DEFAULT_TYPE, approv
         )
         return
 
-    token = args[0]
-    user = await db.get_user_by_handle_or_id(token)
-    if user is None:
+    # Everything after the command counts, so group names with spaces work.
+    token = " ".join(args).strip()
+    kind, value = await _resolve_access_target(token)
+
+    if kind == "ambiguous":
+        names = "\n".join(f"  {g['title']}  ({g['chat_id']})" for g in value[:10])
+        await message.reply_text(f"'{token}' matches several groups:\n{names}\n\nUse the id.")
+        return
+
+    if kind == "group":
+        ok = await db.set_group_approved(value["chat_id"], approved)
         await message.reply_text(
-            f"No one matching '{token}'. They need to have messaged the bot at least once, "
-            f"or use their numeric telegram_id (shown in the access request)."
+            f"✅ {verb} group: {value['title'] or 'untitled'} ({value['chat_id']})." if ok
+            else "⚠️ Could not update that group."
         )
         return
 
-    ok = await db.set_user_approved(user["telegram_id"], approved)
-    handle = f"@{user['username']}" if user.get("username") else user["name"]
+    if kind == "user":
+        ok = await db.set_user_approved(value["telegram_id"], approved)
+        handle = f"@{value['username']}" if value.get("username") else value["name"]
+        await message.reply_text(
+            f"✅ {verb} {handle} (telegram_id {value['telegram_id']})." if ok
+            else f"⚠️ Could not update {handle}."
+        )
+        return
+
     await message.reply_text(
-        f"✅ {verb} {handle} (telegram_id {user['telegram_id']})." if ok
-        else f"⚠️ Could not update {handle}."
+        f"Nothing matching '{token}'.\n"
+        f"For a person, they must have messaged the bot at least once — "
+        f"or use their numeric telegram_id.\n"
+        f"For a group, use the id or name shown by /access."
     )
 
 
@@ -309,6 +370,23 @@ async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/revoke — block this group, or /revoke <@handle|id> for a person."""
     await _set_access(update, context, False)
+
+
+async def _send_chunked(message, lines: list) -> None:
+    """Send lines as however many messages it takes.
+
+    Telegram caps a message at 4096 characters, so a truncated list is not an
+    option — with twenty-odd groups the point of /access is seeing all of them.
+    """
+    chunk, size = [], 0
+    for line in lines:
+        if size + len(line) + 1 > 3500 and chunk:
+            await message.reply_text("\n".join(chunk), parse_mode=ParseMode.MARKDOWN_V2)
+            chunk, size = [], 0
+        chunk.append(line)
+        size += len(line) + 1
+    if chunk:
+        await message.reply_text("\n".join(chunk), parse_mode=ParseMode.MARKDOWN_V2)
 
 
 async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -326,35 +404,32 @@ async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     allowed = [g for g in groups if g["approved"]]
     blocked = [g for g in groups if not g["approved"]]
 
-    lines = [f"🔑 *Access* — {len(allowed)} group\\(s\\) allowed, {len(blocked)} blocked", ""]
-
-    def _rows(items, limit=15):
-        out = []
-        for g in items[:limit]:
-            title = formatter.escape(g["title"] or "untitled")
-            out.append(f"  {title} \\({formatter.escape(str(g['chat_id']))}\\)")
-        if len(items) > limit:
-            out.append(formatter.escape(f"  …and {len(items) - limit} more"))
-        return out
+    lines = [
+        f"🔑 *Access* — {len(allowed)} group\\(s\\) allowed, {len(blocked)} blocked",
+        "",
+    ]
 
     if allowed:
         lines.append("✅ *Allowed*")
-        lines.extend(_rows(allowed))
-        lines.append("")
-    if blocked:
-        lines.append("⛔ *Blocked*")
-        lines.extend(_rows(blocked))
-        lines.append("")
-    if pending:
-        lines.append("⏳ *People waiting*")
-        for u in pending[:15]:
-            handle = f"@{u['username']}" if u.get("username") else u["name"]
-            lines.append(
-                f"  {formatter.escape(handle)} — `/approve {formatter.escape(str(u['telegram_id']))}`"
-            )
-        if len(pending) > 15:
-            lines.append(formatter.escape(f"  …and {len(pending) - 15} more"))
+        for g in allowed:
+            lines.append(formatter.escape(g["title"] or "untitled"))
+            lines.append("  " + _code(f"/revoke {g['chat_id']}"))
         lines.append("")
 
-    lines.append(formatter.escape("Revoke a group by sending /revoke inside it."))
-    await message.reply_text("\n".join(lines).rstrip(), parse_mode=ParseMode.MARKDOWN_V2)
+    if blocked:
+        lines.append("⛔ *Blocked*")
+        for g in blocked:
+            lines.append(formatter.escape(g["title"] or "untitled"))
+            lines.append("  " + _code(f"/approve {g['chat_id']}"))
+        lines.append("")
+
+    if pending:
+        lines.append("⏳ *People waiting*")
+        for u in pending:
+            handle = f"@{u['username']}" if u.get("username") else u["name"]
+            lines.append(formatter.escape(handle))
+            lines.append("  " + _code(f"/approve {u['telegram_id']}"))
+        lines.append("")
+
+    lines.append(formatter.escape("Tap a command to copy it. /revoke also takes a group name."))
+    await _send_chunked(message, [ln for ln in lines])
