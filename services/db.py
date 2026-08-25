@@ -93,7 +93,7 @@ async def get_or_create_user(
                 "INSERT INTO users (telegram_id, name, username) VALUES ($1, $2, $3) "
                 "ON CONFLICT (telegram_id) DO UPDATE "
                 "SET username = COALESCE(EXCLUDED.username, users.username) "
-                "RETURNING id, telegram_id, name, username, approved, created_at",
+                "RETURNING id, telegram_id, name, username, approved, revoked_at, created_at",
                 telegram_id, name, (username or "").lstrip("@").lower() or None,
             )
             return dict(row)
@@ -706,17 +706,25 @@ async def get_group_logs_today(chat_id: int) -> list[dict]:
         return []
 
 
-async def is_group_approved(chat_id: int) -> bool:
-    """Whether this group may use the bot. Unknown groups are not approved."""
+async def get_group_access(chat_id: int) -> dict:
+    """Access state for a group: {approved, revoked_at}.
+
+    revoked_at distinguishes a group the owner deliberately blocked from one the
+    bot has simply never been approved for — the first should stay silent, the
+    second is worth a heads-up.
+    """
     pool = get_pool()
     try:
         async with pool.acquire() as conn:
-            val = await conn.fetchval("SELECT approved FROM groups WHERE chat_id = $1", chat_id)
-            return bool(val)
+            row = await conn.fetchrow(
+                "SELECT approved, revoked_at FROM groups WHERE chat_id = $1", chat_id)
+            if row is None:
+                return {"approved": False, "revoked_at": None}
+            return dict(row)
     except Exception:
-        logger.exception("is_group_approved failed for chat=%s", chat_id)
+        logger.exception("get_group_access failed for chat=%s", chat_id)
         # Fail open: a database blip must not lock everyone out of a working bot.
-        return True
+        return {"approved": True, "revoked_at": None}
 
 
 async def set_group_approved(chat_id: int, approved: bool) -> bool:
@@ -725,7 +733,9 @@ async def set_group_approved(chat_id: int, approved: bool) -> bool:
     try:
         async with pool.acquire() as conn:
             result = await conn.execute(
-                "UPDATE groups SET approved = $2 WHERE chat_id = $1", chat_id, approved)
+                "UPDATE groups SET approved = $2, "
+                "       revoked_at = CASE WHEN $2 THEN NULL ELSE NOW() END "
+                "WHERE chat_id = $1", chat_id, approved)
             return result.endswith(" 1")
     except Exception:
         logger.exception("set_group_approved failed for chat=%s", chat_id)
@@ -738,7 +748,9 @@ async def set_user_approved(telegram_id: int, approved: bool) -> bool:
     try:
         async with pool.acquire() as conn:
             result = await conn.execute(
-                "UPDATE users SET approved = $2 WHERE telegram_id = $1", telegram_id, approved)
+                "UPDATE users SET approved = $2, "
+                "       revoked_at = CASE WHEN $2 THEN NULL ELSE NOW() END "
+                "WHERE telegram_id = $1", telegram_id, approved)
             return result.endswith(" 1")
     except Exception:
         logger.exception("set_user_approved failed for telegram_id=%s", telegram_id)
@@ -753,12 +765,12 @@ async def get_user_by_handle_or_id(token: str) -> Optional[dict]:
         async with pool.acquire() as conn:
             if cleaned.isdigit():
                 row = await conn.fetchrow(
-                    "SELECT id, telegram_id, name, username, approved FROM users "
+                    "SELECT id, telegram_id, name, username, approved, revoked_at FROM users "
                     "WHERE telegram_id = $1", int(cleaned))
                 if row:
                     return dict(row)
             row = await conn.fetchrow(
-                "SELECT id, telegram_id, name, username, approved FROM users "
+                "SELECT id, telegram_id, name, username, approved, revoked_at FROM users "
                 "WHERE lower(username) = $1 OR lower(name) = $1", cleaned)
             return dict(row) if row else None
     except Exception:

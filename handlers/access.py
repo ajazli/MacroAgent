@@ -11,7 +11,17 @@ Either way the owner gets a DM naming them and the exact command to let them in.
 
 The gate runs in handler group -2, ahead of every other handler, and raises
 ApplicationHandlerStop so an unapproved chat reaches nothing at all — no Claude
-calls, no logging, no replies beyond one "this bot is private" notice.
+calls, no replies.
+
+It stays silent in groups. Most blocked messages there are ordinary chatter the
+bot would have ignored anyway, so answering them adds noise where there was none
+and announces the bot to a room not meant to have it. Only a one-to-one chat gets
+the "this bot is private" notice, because messaging the bot directly is a
+deliberate act that deserves an answer. The owner is told either way.
+
+Revoking is distinct from never having been approved: a revoked group or person
+is dropped in complete silence, with no repeat notification about a decision the
+owner already made.
 
 If no owner is configured the gate is disabled and says so loudly at startup.
 Failing open is deliberate: locking the owner out of their own bot would need an
@@ -73,6 +83,16 @@ def log_access_mode() -> None:
         logger.info("Access control active — owner is telegram_id=%s", oid)
 
 
+# Commands that manage access itself. These keep working for the owner in any
+# chat, so revoking a group can never strand them with no way back in.
+_ACCESS_COMMANDS = ("/approve", "/revoke", "/access")
+
+
+def _is_access_command(message) -> bool:
+    text = (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip().lower()
+    return text.startswith(_ACCESS_COMMANDS)
+
+
 async def _tell_owner(context, text: str, key) -> None:
     """DM the owner once about a blocked chat or person."""
     oid = owner_id()
@@ -85,8 +105,13 @@ async def _tell_owner(context, text: str, key) -> None:
         logger.warning("Could not notify owner %s about %s", oid, key, exc_info=True)
 
 
-async def _deny(update: Update, context: ContextTypes.DEFAULT_TYPE, key) -> None:
-    """Tell the requester once that the bot is private."""
+async def _deny_in_private(update: Update, key) -> None:
+    """Tell someone the bot is private — only ever in a one-to-one chat.
+
+    In a group the gate stays silent. Most blocked messages are ordinary chatter
+    the bot would have ignored anyway, so replying to them adds noise where there
+    was none and announces the bot to a room that is not supposed to have it.
+    """
     if key in _notified_chats:
         return
     _notified_chats.add(key)
@@ -109,30 +134,41 @@ async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if tg_user is None or chat is None or tg_user.is_bot:
         return
 
-    if is_owner(tg_user.id):
-        return  # The owner is never locked out of their own bot
+    owner = is_owner(tg_user.id)
 
-    if chat.type in ("group", "supergroup"):
-        # Make sure the group exists in the table so it shows up in /access,
-        # then check it. New rows default to unapproved.
+    # The owner keeps access to the access commands themselves, everywhere. Their
+    # ordinary messages do not bypass anything: a group they revoked is off for
+    # them too, which is the whole point of revoking it.
+    if owner and _is_access_command(update.effective_message):
+        return
+
+    is_group = chat.type in ("group", "supergroup")
+
+    if is_group:
+        # Register first so the group shows up in /access. New rows are unapproved.
         try:
             await db.register_group(chat.id, chat.title or "")
         except Exception:
             logger.warning("Could not register group %s during access check", chat.id, exc_info=True)
 
-        if not await db.is_group_approved(chat.id):
-            logger.info("Blocked unapproved group %s (%s)", chat.id, chat.title)
-            await _tell_owner(
-                context,
-                f"🔒 New group wants access: {chat.title or 'untitled'}\n"
-                f"chat_id: {chat.id}\n\n"
-                f"Send /approve in that group to allow it, or ignore this to keep it blocked.",
-                ("chat", chat.id),
-            )
-            await _deny(update, context, ("chat", chat.id))
+        state = await db.get_group_access(chat.id)
+        if not state.get("approved"):
+            if state.get("revoked_at") is None:
+                logger.info("Blocked new group %s (%s)", chat.id, chat.title)
+                await _tell_owner(
+                    context,
+                    f"🔒 New group wants access: {chat.title or 'untitled'}\n"
+                    f"chat_id: {chat.id}\n\n"
+                    f"Send /approve in that group to allow it, or ignore this to keep it blocked.",
+                    ("chat", chat.id),
+                )
+            else:
+                logger.debug("Ignoring revoked group %s (%s)", chat.id, chat.title)
             raise ApplicationHandlerStop
 
-    # Whoever is speaking must themselves be approved, in a group or a DM.
+    if owner:
+        return  # Owner is always an approved person
+
     try:
         user = await db.get_or_create_user_from_tg(tg_user)
     except Exception:
@@ -140,18 +176,22 @@ async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return  # Fail open rather than lock out a working bot on a DB blip
 
     if not user.get("approved", True):
-        logger.info("Blocked unapproved user %s (%s)", tg_user.id, user.get("name"))
-        handle = f"@{user['username']}" if user.get("username") else user.get("name", "unknown")
-        where = chat.title if chat.type in ("group", "supergroup") else "a private chat"
-        await _tell_owner(
-            context,
-            f"🔒 New person wants access: {handle}\n"
-            f"telegram_id: {tg_user.id}\n"
-            f"seen in: {where}\n\n"
-            f"Approve with:  /approve {tg_user.id}",
-            ("user", tg_user.id),
-        )
-        await _deny(update, context, ("user", tg_user.id))
+        if user.get("revoked_at") is None:
+            logger.info("Blocked new person %s (%s)", tg_user.id, user.get("name"))
+            handle = f"@{user['username']}" if user.get("username") else user.get("name", "unknown")
+            where = chat.title if is_group else "a private chat"
+            await _tell_owner(
+                context,
+                f"🔒 New person wants access: {handle}\n"
+                f"telegram_id: {tg_user.id}\n"
+                f"seen in: {where}\n\n"
+                f"Approve with:  /approve {tg_user.id}",
+                ("user", tg_user.id),
+            )
+            if not is_group:
+                await _deny_in_private(update, ("user", tg_user.id))
+        else:
+            logger.debug("Ignoring revoked person %s", tg_user.id)
         raise ApplicationHandlerStop
 
 
