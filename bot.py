@@ -73,6 +73,7 @@ async def _post_init(application: Application) -> None:
         BotCommand("stepsavg",    "Steps average & stats"),
         BotCommand("leaderboard", "Weekly group rankings"),
         BotCommand("meal",        "Analyse a meal photo (send photo with /meal or reply to one)"),
+        BotCommand("sessions",    "PT sessions done and left — /sessions or /sessions <name>"),
         BotCommand("dailymeals",  "Today's meals — /dailymeals or /dailymeals <name>"),
         BotCommand("weeklymeals", "Past 7 days of meals — add a <name> for someone else"),
         BotCommand("checkin",     "Start your weekly check-in"),
@@ -194,6 +195,9 @@ def build_application() -> Application:
     )
     from handlers.photo import handle_photo, cmd_meal
     from handlers.chat import handle_text, cmd_ask
+    from handlers.sessions import (
+        cmd_sessions, cmd_addsessions, cmd_logsession, cmd_undosession,
+    )
     from handlers.access import (
         access_gate, cmd_approve, cmd_revoke, cmd_access, cmd_addowner, cmd_removeowner,
     )
@@ -214,6 +218,10 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("access",      cmd_access))
     app.add_handler(CommandHandler("addowner",    cmd_addowner))
     app.add_handler(CommandHandler("removeowner", cmd_removeowner))
+    app.add_handler(CommandHandler("sessions",    cmd_sessions))
+    app.add_handler(CommandHandler("addsessions", cmd_addsessions))
+    app.add_handler(CommandHandler("logsession",  cmd_logsession))
+    app.add_handler(CommandHandler("undosession", cmd_undosession))
     app.add_handler(CommandHandler("health",      cmd_health))
     app.add_handler(CommandHandler("today",       cmd_today))
     app.add_handler(CommandHandler("weight",      cmd_weight))

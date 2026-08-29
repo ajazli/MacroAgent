@@ -778,6 +778,79 @@ async def get_user_by_handle_or_id(token: str) -> Optional[dict]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# PT session balances
+# ---------------------------------------------------------------------------
+
+async def add_pt_entry(
+    chat_id: int, user_id: int, delta: int,
+    note: Optional[str] = None, created_by: Optional[int] = None,
+) -> bool:
+    """Record one ledger entry: +N for a package sold, -1 for a session used."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO pt_sessions (chat_id, user_id, delta, note, created_by) "
+                "VALUES ($1, $2, $3, $4, $5)",
+                chat_id, user_id, delta, note, created_by,
+            )
+            return True
+    except Exception:
+        logger.exception("add_pt_entry failed for chat=%s user=%s", chat_id, user_id)
+        return False
+
+
+_PT_BALANCE_SELECT = (
+    "SELECT u.id AS user_id, u.name, u.username, gm.display_name, "
+    "       COALESCE(SUM(p.delta), 0) AS remaining, "
+    "       COALESCE(SUM(CASE WHEN p.delta > 0 THEN p.delta ELSE 0 END), 0) AS purchased, "
+    "       COALESCE(-SUM(CASE WHEN p.delta < 0 THEN p.delta ELSE 0 END), 0) AS used, "
+    "       MAX(CASE WHEN p.delta < 0 THEN p.created_at END) AS last_session "
+    "FROM pt_sessions p "
+    "JOIN users u ON u.id = p.user_id "
+    "LEFT JOIN group_members gm ON gm.chat_id = p.chat_id AND gm.user_id = p.user_id "
+    "WHERE p.chat_id = $1 "
+)
+
+
+async def get_pt_balances(chat_id: int, user_id: Optional[int] = None) -> list[dict]:
+    """Session balances for a group, or for one client in it."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            if user_id is None:
+                rows = await conn.fetch(
+                    _PT_BALANCE_SELECT +
+                    "GROUP BY u.id, u.name, u.username, gm.display_name "
+                    "ORDER BY lower(u.name)", chat_id)
+            else:
+                rows = await conn.fetch(
+                    _PT_BALANCE_SELECT + "AND p.user_id = $2 "
+                    "GROUP BY u.id, u.name, u.username, gm.display_name", chat_id, user_id)
+            return [dict(r) for r in rows]
+    except Exception:
+        logger.exception("get_pt_balances failed for chat=%s", chat_id)
+        return []
+
+
+async def delete_last_pt_entry(chat_id: int, user_id: int) -> Optional[dict]:
+    """Remove the newest ledger entry for a client. Returns it, or None if empty."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "DELETE FROM pt_sessions WHERE id = ("
+                "  SELECT id FROM pt_sessions WHERE chat_id = $1 AND user_id = $2 "
+                "  ORDER BY created_at DESC, id DESC LIMIT 1"
+                ") RETURNING delta, note, created_at",
+                chat_id, user_id)
+            return dict(row) if row else None
+    except Exception:
+        logger.exception("delete_last_pt_entry failed for chat=%s user=%s", chat_id, user_id)
+        return None
+
+
 async def get_owner_telegram_ids() -> list[int]:
     """Telegram ids of everyone promoted to owner in the database."""
     pool = get_pool()

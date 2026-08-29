@@ -821,3 +821,56 @@ def format_check_in_status(schedules: list) -> str:
         lines.append(f"👤 *{name}* — {date_str} {escape(status)}")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# PT session balances
+# ---------------------------------------------------------------------------
+
+def _pt_left_phrase(remaining: int) -> str:
+    """How many sessions are left, saying so plainly when the package is overdrawn."""
+    if remaining > 0:
+        return f"{remaining} left"
+    if remaining == 0:
+        return "none left"
+    return f"none left \\({abs(remaining)} over\\)"
+
+
+def format_pt_balance(label: str, row: dict) -> str:
+    """One client's session balance."""
+    used = int(row["used"])
+    purchased = int(row["purchased"])
+    remaining = int(row["remaining"])
+
+    lines = [
+        f"🏋️ *Sessions — {escape(label)}*",
+        escape("━━━━━━━━━━━━━━━"),
+        f"📦 Purchased: *{escape(str(purchased))}*",
+        f"✅ Done: *{escape(str(used))}*",
+        f"🔢 Remaining: *{_pt_left_phrase(remaining)}*",
+    ]
+    last = row.get("last_session")
+    if last is not None:
+        try:
+            lines.append(f"_Last session: {escape(last.strftime('%d %b %Y'))}_")
+        except Exception:
+            pass
+    return "\n".join(lines)
+
+
+def format_pt_group(rows: list) -> str:
+    """Every client in a group with a session balance."""
+    if not rows:
+        return escape("No session packages recorded in this group yet.\n"
+                      "Add one with /addsessions <name> <count>.")
+
+    lines = ["🏋️ *Sessions — this group*", ""]
+    for row in rows:
+        handle = (row.get("username") or "").strip()
+        label = f"@{handle}" if handle else (row.get("display_name") or row["name"])
+        used, purchased = int(row["used"]), int(row["purchased"])
+        lines.append(
+            f"👤 *{escape(label)}* — {escape(str(used))} of {escape(str(purchased))} done, "
+            f"*{_pt_left_phrase(int(row['remaining']))}*"
+        )
+    return "\n".join(lines)
