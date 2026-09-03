@@ -71,7 +71,7 @@ async def _post_init(application: Application) -> None:
         BotCommand("weightavg",   "Weight average & stats"),
         BotCommand("stepsgraph",  "Steps chart (past 7 days)"),
         BotCommand("stepsavg",    "Steps average & stats"),
-        BotCommand("leaderboard", "Weekly group rankings"),
+        BotCommand("leaderboard", "Today's calorie leaderboard for this group"),
         BotCommand("meal",        "Analyse a meal photo (send photo with /meal or reply to one)"),
         BotCommand("sessions",    "PT sessions done and left — /sessions or /sessions <name>"),
         BotCommand("target",      "Daily calorie target — /target or /target <name>"),

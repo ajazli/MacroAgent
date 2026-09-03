@@ -565,35 +565,51 @@ def format_log_confirmation(log_type: str, data: dict) -> str:
 # /leaderboard formatter
 # ---------------------------------------------------------------------------
 
-def format_leaderboard(entries: list, days: int = 7) -> str:
-    """entries: list of {name, steps, calories} sorted by caller."""
-    if not entries:
-        return escape("No data logged in the past 7 days.")
+def format_leaderboard(entries: list) -> str:
+    """Today's calories for one group, highest first.
 
-    by_steps    = sorted(entries, key=lambda x: x["steps"],    reverse=True)
-    by_calories = sorted(entries, key=lambda x: x["calories"], reverse=True)
+    Steps were dropped: the bot no longer prompts for them and almost nobody logs
+    them, so that half of the board was permanently empty.
+
+    Where a client has a daily target, their number is shown against it — 1,840
+    of 1,800 says far more in a body-recomp group than 1,840 on its own.
+    """
+    if not entries:
+        return escape("Nobody in this group has logged a meal today.")
 
     medals = ["🥇", "🥈", "🥉"]
+    today_str = escape(today_sgt().strftime("%d %b %Y"))
+    lines = [f"🏆 *Calorie Leaderboard — {today_str}*", ""]
 
-    lines = [f"🏆 *Leaderboard — Past {escape(str(days))} Days*", ""]
+    logged = [e for e in entries if e["calories"] > 0]
+    quiet = [e for e in entries if e["calories"] == 0]
 
-    # Steps
-    lines.append("👟 *Steps*")
-    for i, e in enumerate(by_steps[:5]):
-        medal = medals[i] if i < 3 else f"{i + 1}\\."
-        name  = escape(e["name"])
-        steps = escape(f"{e['steps']:,}")
-        lines.append(f"{medal} {name} — {steps} steps")
+    for i, e in enumerate(logged):
+        medal = medals[i] if i < 3 else f"{escape(str(i + 1))}\\."
+        handle = (e.get("username") or "").strip()
+        name = escape(f"@{handle}" if handle else e["name"])
+        cal = escape(f"{e['calories']:,}")
+        target = e.get("target")
 
-    lines.append("")
+        if target:
+            over = e["calories"] - target
+            flag = " ⚠️" if over > 0 else ""
+            line = f"{medal} {name} — *{cal}* of {escape(f'{target:,}')} kcal{flag}"
+        else:
+            line = f"{medal} {name} — *{cal}* kcal"
 
-    # Calories
-    lines.append("🍽 *Calories*")
-    for i, e in enumerate(by_calories[:5]):
-        medal = medals[i] if i < 3 else f"{i + 1}\\."
-        name = escape(e["name"])
-        cal  = escape(f"{e['calories']:,}")
-        lines.append(f"{medal} {name} — {cal} kcal")
+        meals = e.get("meals", 0)
+        line += escape(f"  ({meals} meal{'s' if meals != 1 else ''})")
+        lines.append(line)
+
+    if quiet:
+        if logged:
+            lines.append("")
+        names = ", ".join(
+            f"@{e['username']}" if (e.get("username") or "").strip() else e["name"]
+            for e in quiet
+        )
+        lines.append(f"😴 _{escape('Nothing logged yet: ' + names)}_")
 
     return "\n".join(lines)
 

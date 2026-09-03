@@ -353,38 +353,58 @@ async def get_log_streak(user_id: int) -> int:
         return 0
 
 
-async def get_leaderboard_data(days: int = 7) -> list[dict]:
-    """Aggregate steps and calories per user for the past N days."""
+async def get_leaderboard_data(chat_id: int) -> list[dict]:
+    """Today's calories per member of one group.
+
+    Scoped by the group_members roster. The previous version selected across all
+    users with no chat filter, so a leaderboard in one group listed people from
+    every other one.
+
+    A LEFT JOIN keeps members who have logged nothing, which is the useful part
+    of a daily board in a small accountability group.
+    """
     pool = get_pool()
     today = today_sgt()
-    start = today - timedelta(days=days - 1)
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT u.name, l.type, l.data FROM logs l "
-                "JOIN users u ON u.id = l.user_id "
-                "WHERE l.date BETWEEN $1 AND $2 AND l.type IN ('steps', 'meal') "
-                "ORDER BY u.name",
-                start, today,
+                "SELECT u.id, u.name, u.username, u.daily_calorie_target, l.data "
+                "FROM group_members gm "
+                "JOIN users u ON u.id = gm.user_id "
+                "LEFT JOIN logs l ON l.user_id = gm.user_id "
+                "                 AND l.date = $2 AND l.type = 'meal' "
+                "WHERE gm.chat_id = $1",
+                chat_id, today,
             )
-        user_stats: dict = {}
+
+        stats: dict = {}
         for r in rows:
-            name = r["name"]
-            if name not in user_stats:
-                user_stats[name] = {"steps": 0, "calories": 0}
+            uid = r["id"]
+            if uid not in stats:
+                stats[uid] = {
+                    "name": r["name"],
+                    "username": r["username"],
+                    "target": r["daily_calorie_target"],
+                    "calories": 0,
+                    "meals": 0,
+                }
             data = r["data"]
+            if data is None:
+                continue  # roster member with nothing logged today
             if isinstance(data, str):
                 try:
                     data = json.loads(data)
                 except Exception:
                     data = {}
-            if r["type"] == "steps":
-                user_stats[name]["steps"] += int(float(data.get("count", 0) or 0))
-            elif r["type"] == "meal":
-                user_stats[name]["calories"] += int(data.get("calories", 0) or 0)
-        return [{"name": n, **v} for n, v in sorted(user_stats.items())]
+            stats[uid]["calories"] += int(data.get("calories", 0) or 0)
+            stats[uid]["meals"] += 1
+
+        return sorted(
+            stats.values(),
+            key=lambda s: (-s["calories"], s["name"].lower()),
+        )
     except Exception:
-        logger.exception("get_leaderboard_data failed")
+        logger.exception("get_leaderboard_data failed for chat=%s", chat_id)
         return []
 
 

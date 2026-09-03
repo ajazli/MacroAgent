@@ -607,13 +607,24 @@ async def cmd_myreport(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # ---------------------------------------------------------------------------
 
 async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/leaderboard — today's calories for this group, highest first."""
+    message = update.effective_message
+    chat = update.effective_chat
+
+    if chat.type not in ("group", "supergroup"):
+        await message.reply_text(
+            formatter.escape("The leaderboard compares people in a group, so it only works in one."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
     try:
-        entries = await db.get_leaderboard_data(days=7)
-        reply = formatter.format_leaderboard(entries, days=7)
-        await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN_V2)
+        entries = await db.get_leaderboard_data(message.chat_id)
+        await message.reply_text(
+            formatter.format_leaderboard(entries), parse_mode=ParseMode.MARKDOWN_V2)
     except Exception:
         logger.exception("Error in cmd_leaderboard")
-        await update.message.reply_text(
+        await message.reply_text(
             formatter.escape("⚠️ Could not load leaderboard. Please try again."),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
