@@ -93,7 +93,8 @@ async def get_or_create_user(
                 "INSERT INTO users (telegram_id, name, username) VALUES ($1, $2, $3) "
                 "ON CONFLICT (telegram_id) DO UPDATE "
                 "SET username = COALESCE(EXCLUDED.username, users.username) "
-                "RETURNING id, telegram_id, name, username, approved, revoked_at, is_owner, created_at",
+                "RETURNING id, telegram_id, name, username, approved, revoked_at, is_owner, "
+                "          daily_calorie_target, created_at",
                 telegram_id, name, (username or "").lstrip("@").lower() or None,
             )
             return dict(row)
@@ -776,6 +777,50 @@ async def get_user_by_handle_or_id(token: str) -> Optional[dict]:
     except Exception:
         logger.exception("get_user_by_handle_or_id failed for %s", token)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Daily calorie targets
+# ---------------------------------------------------------------------------
+
+async def set_calorie_target(user_id: int, target: Optional[int]) -> bool:
+    """Set a client's daily calorie target, or clear it with None."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE users SET daily_calorie_target = $2 WHERE id = $1", user_id, target)
+            return result.endswith(" 1")
+    except Exception:
+        logger.exception("set_calorie_target failed for user_id=%s", user_id)
+        return False
+
+
+async def get_calorie_target(user_id: int) -> Optional[int]:
+    """A client's daily calorie target, or None if the trainer hasn't set one."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT daily_calorie_target FROM users WHERE id = $1", user_id)
+    except Exception:
+        logger.exception("get_calorie_target failed for user_id=%s", user_id)
+        return None
+
+
+async def get_group_targets(chat_id: int) -> list[dict]:
+    """Every member of a group with their target, for the trainer's overview."""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT u.id, u.name, u.username, gm.display_name, u.daily_calorie_target "
+                "FROM group_members gm JOIN users u ON u.id = gm.user_id "
+                "WHERE gm.chat_id = $1 ORDER BY lower(u.name)", chat_id)
+            return [dict(r) for r in rows]
+    except Exception:
+        logger.exception("get_group_targets failed for chat=%s", chat_id)
+        return []
 
 
 # ---------------------------------------------------------------------------

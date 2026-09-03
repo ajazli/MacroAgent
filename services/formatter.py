@@ -874,3 +874,39 @@ def format_pt_group(rows: list) -> str:
             f"*{_pt_left_phrase(int(row['remaining']))}*"
         )
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Calorie target status
+# ---------------------------------------------------------------------------
+
+def format_calorie_status(
+    day_total: int,
+    target: Optional[int],
+    meal_kcal: int,
+    meal_limit: int,
+) -> Optional[str]:
+    """The line appended under a meal analysis, or None when there is nothing to say.
+
+    With a target, this always reports progress — knowing you are at 1,200 of
+    1,800 is the useful part, and the warning is just that same line once it has
+    gone red. Without one there is nothing to be over, so it only speaks up when
+    a single meal is unusually large.
+    """
+    if target and target > 0:
+        left = target - day_total
+        totals = f"{escape(f'{day_total:,}')} of {escape(f'{target:,}')} kcal today"
+        if left < 0:
+            return f"⚠️ *Over target* — {totals} \\({escape(f'{abs(left):,}')} over\\)"
+        if left == 0:
+            return f"⚠️ *On the limit* — {totals}, nothing left"
+        if day_total >= target * 0.9:
+            return f"⚡ *Close to target* — {totals}, {escape(f'{left:,}')} left"
+        return f"📈 {totals}, {escape(f'{left:,}')} left"
+
+    if meal_kcal > meal_limit:
+        return (
+            f"⚠️ *Big meal* — {escape(f'{meal_kcal:,}')} kcal in one sitting\\. "
+            f"_No daily target set; ask your trainer for one\\._"
+        )
+    return None

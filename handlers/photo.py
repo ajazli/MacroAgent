@@ -158,8 +158,9 @@ async def _run_meal_analysis(
         )
         return
 
+    status = await _calorie_status(user["id"], int(meal_data.get("calories", 0) or 0))
     await processing_msg.edit_text(
-        formatter.format_meal_analysis(meal_data),
+        formatter.format_meal_analysis(meal_data) + status,
         parse_mode=ParseMode.MARKDOWN_V2,
     )
 
@@ -168,6 +169,26 @@ async def _run_meal_analysis(
         await db.save_log_message(log_row["id"], processing_msg.chat_id, processing_msg.message_id)
     except Exception:
         logger.warning("Could not save log_message mapping for log %s", log_row["id"])
+
+
+async def _calorie_status(user_id: int, meal_kcal: int) -> str:
+    """The progress/warning line for a client's day, ready to append to an analysis.
+
+    Returns "" when there is nothing worth saying, so callers can concatenate it
+    unconditionally. Never raises: a meal must still be reported even if the
+    day's totals cannot be worked out.
+    """
+    from handlers.targets import meal_kcal_limit
+    try:
+        target = await db.get_calorie_target(user_id)
+        meals = await db.get_logs_for_user_today(user_id, log_type="meal")
+        day_total = sum(int(_log_data(row).get("calories", 0) or 0) for row in meals)
+        line = formatter.format_calorie_status(
+            day_total, target, meal_kcal, meal_kcal_limit())
+        return f"\n\n{line}" if line else ""
+    except Exception:
+        logger.warning("Could not build calorie status for user %s", user_id, exc_info=True)
+        return ""
 
 
 async def _resolve_user(tg_user, message):
@@ -319,8 +340,10 @@ async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_T
             f"\n_{formatter.escape(owner)}'s meal, corrected by "
             f"{formatter.escape(editor_name)}_"
         )
+    status = await _calorie_status(
+        log_row["user_id"], int(corrected_data.get("calories", 0) or 0))
     await processing.edit_text(
-        formatter.format_meal_analysis(corrected_data) + "\n\n" + footer,
+        formatter.format_meal_analysis(corrected_data) + status + "\n\n" + footer,
         parse_mode=ParseMode.MARKDOWN_V2,
     )
 
