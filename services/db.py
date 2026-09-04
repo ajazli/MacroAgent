@@ -353,15 +353,13 @@ async def get_log_streak(user_id: int) -> int:
         return 0
 
 
-async def get_leaderboard_data(chat_id: int) -> list[dict]:
-    """Today's calories per member of one group.
+async def get_leaderboard_data() -> list[dict]:
+    """Today's calories for every user, across all groups.
 
-    Scoped by the group_members roster. The previous version selected across all
-    users with no chat filter, so a leaderboard in one group listed people from
-    every other one.
-
-    A LEFT JOIN keeps members who have logged nothing, which is the useful part
-    of a daily board in a small accountability group.
+    Deliberately not scoped by chat: the leaderboard is meant to rank everyone
+    the bot knows, so the same board shows the same people wherever it is run.
+    Only users who have actually logged a meal today appear — a global list of
+    everyone who has not would be noise.
     """
     pool = get_pool()
     today = today_sgt()
@@ -369,12 +367,10 @@ async def get_leaderboard_data(chat_id: int) -> list[dict]:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT u.id, u.name, u.username, u.daily_calorie_target, l.data "
-                "FROM group_members gm "
-                "JOIN users u ON u.id = gm.user_id "
-                "LEFT JOIN logs l ON l.user_id = gm.user_id "
-                "                 AND l.date = $2 AND l.type = 'meal' "
-                "WHERE gm.chat_id = $1",
-                chat_id, today,
+                "FROM logs l "
+                "JOIN users u ON u.id = l.user_id "
+                "WHERE l.date = $1 AND l.type = 'meal'",
+                today,
             )
 
         stats: dict = {}
@@ -389,13 +385,13 @@ async def get_leaderboard_data(chat_id: int) -> list[dict]:
                     "meals": 0,
                 }
             data = r["data"]
-            if data is None:
-                continue  # roster member with nothing logged today
             if isinstance(data, str):
                 try:
                     data = json.loads(data)
                 except Exception:
                     data = {}
+            if not isinstance(data, dict):
+                continue
             stats[uid]["calories"] += int(data.get("calories", 0) or 0)
             stats[uid]["meals"] += 1
 
@@ -404,7 +400,7 @@ async def get_leaderboard_data(chat_id: int) -> list[dict]:
             key=lambda s: (-s["calories"], s["name"].lower()),
         )
     except Exception:
-        logger.exception("get_leaderboard_data failed for chat=%s", chat_id)
+        logger.exception("get_leaderboard_data failed")
         return []
 
 

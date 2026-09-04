@@ -565,26 +565,28 @@ def format_log_confirmation(log_type: str, data: dict) -> str:
 # /leaderboard formatter
 # ---------------------------------------------------------------------------
 
+# Rows shown before the board collapses to a count, so it cannot outgrow
+# Telegram's message limit as the user base grows.
+_LEADERBOARD_MAX_ROWS = 25
+
+
 def format_leaderboard(entries: list) -> str:
-    """Today's calories for one group, highest first.
+    """Today's calories for everyone the bot knows, highest first.
 
-    Steps were dropped: the bot no longer prompts for them and almost nobody logs
-    them, so that half of the board was permanently empty.
+    Global on purpose — the same board wherever it is run. Steps were dropped:
+    nothing prompts for them any more, so that half was permanently empty.
 
-    Where a client has a daily target, their number is shown against it — 1,840
-    of 1,800 says far more in a body-recomp group than 1,840 on its own.
+    Where a user has a daily target their number is shown against it, since
+    1,840 of 1,800 says far more than 1,840 on its own.
     """
     if not entries:
-        return escape("Nobody in this group has logged a meal today.")
+        return escape("Nobody has logged a meal today.")
 
     medals = ["🥇", "🥈", "🥉"]
     today_str = escape(today_sgt().strftime("%d %b %Y"))
     lines = [f"🏆 *Calorie Leaderboard — {today_str}*", ""]
 
-    logged = [e for e in entries if e["calories"] > 0]
-    quiet = [e for e in entries if e["calories"] == 0]
-
-    for i, e in enumerate(logged):
+    for i, e in enumerate(entries[:_LEADERBOARD_MAX_ROWS]):
         medal = medals[i] if i < 3 else f"{escape(str(i + 1))}\\."
         handle = (e.get("username") or "").strip()
         name = escape(f"@{handle}" if handle else e["name"])
@@ -592,8 +594,7 @@ def format_leaderboard(entries: list) -> str:
         target = e.get("target")
 
         if target:
-            over = e["calories"] - target
-            flag = " ⚠️" if over > 0 else ""
+            flag = " ⚠️" if e["calories"] > target else ""
             line = f"{medal} {name} — *{cal}* of {escape(f'{target:,}')} kcal{flag}"
         else:
             line = f"{medal} {name} — *{cal}* kcal"
@@ -602,14 +603,9 @@ def format_leaderboard(entries: list) -> str:
         line += escape(f"  ({meals} meal{'s' if meals != 1 else ''})")
         lines.append(line)
 
-    if quiet:
-        if logged:
-            lines.append("")
-        names = ", ".join(
-            f"@{e['username']}" if (e.get("username") or "").strip() else e["name"]
-            for e in quiet
-        )
-        lines.append(f"😴 _{escape('Nothing logged yet: ' + names)}_")
+    if len(entries) > _LEADERBOARD_MAX_ROWS:
+        lines.append("")
+        lines.append(escape(f"…and {len(entries) - _LEADERBOARD_MAX_ROWS} more"))
 
     return "\n".join(lines)
 
