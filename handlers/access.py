@@ -6,21 +6,22 @@ comma-separated list is accepted — and they cannot be demoted by a command, so
 there is always a way back in. Anyone else is promoted at runtime with
 /addowner, which takes an @handle rather than a numeric id.
 
-Everything that existed when this shipped was grandfathered in (see migration
-010), so nothing that was working stopped. From then on:
+Approval is per GROUP and nothing else. Approve a group and everyone in it can
+use the bot there, immediately and without being approved individually. There is
+deliberately no per-person layer: the group is the unit a trainer actually
+thinks in, and a second gate meant approving a group still left its members
+locked out one by one.
 
-  • a group the bot is added to starts unapproved
-  • a person who has never used the bot before starts unapproved
-
-Either way the owner gets a DM naming them and the exact command to let them in.
+A group the bot is added to starts unapproved, and the owner gets a DM naming it
+with the exact command to let it in.
 
 The gate runs in handler group -2, ahead of every other handler, and raises
 ApplicationHandlerStop so an unapproved chat reaches nothing at all — no Claude
 calls, no replies.
 
-One-to-one chats are owner-only. Everyone else works with the bot in their
-program group, so a DM from anyone else is turned away with a pointer there
-rather than an approval request — approving them would not grant a DM anyway.
+One-to-one chats are owner-only, and no group approval changes that: access is
+granted inside approved groups, not to a person everywhere. A DM from anyone
+else is turned away with a pointer to their group.
 
 In a group it answers only someone actually trying to use it — a meal photo, a
 command, an @mention, a reply to the bot. Those earn a short "not approved yet"
@@ -28,9 +29,9 @@ instead of an analysis, because silence there just looks broken. Ordinary
 chatter gets nothing: answering that is what made the bot butt into
 conversations it had no business in. The owner is told either way.
 
-Revoking is distinct from never having been approved: a revoked group or person
-is dropped in complete silence, with no repeat notification about a decision the
-owner already made.
+Revoking is distinct from never having been approved: a revoked group is dropped
+in complete silence, with no repeat notification about a decision the owner
+already made.
 
 If no owner is configured the gate is disabled and says so loudly at startup.
 Failing open is deliberate: locking the owner out of their own bot would need an
@@ -73,12 +74,6 @@ PENDING_CHAT_MESSAGE = (
     "🔒 I'm not approved for this chat yet, so I can't analyse that. "
     "I've asked the owner — once they approve it, send the photo again."
 )
-
-PENDING_USER_MESSAGE = (
-    "🔒 You're not approved to use me yet. I've let the owner know — "
-    "once they approve you, try again."
-)
-
 
 # Owners promoted at runtime, cached so the gate does not hit the database on
 # every single message. Reloaded at startup and whenever it changes.
@@ -274,34 +269,6 @@ async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 logger.debug("Ignoring revoked group %s (%s)", chat.id, chat.title)
             raise ApplicationHandlerStop
 
-    if owner:
-        return  # Owner is always an approved person
-
-    try:
-        user = await db.get_or_create_user_from_tg(tg_user)
-    except Exception:
-        logger.warning("Could not resolve user %s during access check", tg_user.id, exc_info=True)
-        return  # Fail open rather than lock out a working bot on a DB blip
-
-    if not user.get("approved", True):
-        if user.get("revoked_at") is None:
-            logger.info("Blocked new person %s (%s)", tg_user.id, user.get("name"))
-            handle = f"@{user['username']}" if user.get("username") else user.get("name", "unknown")
-            where = chat.title or "a group"
-            await _tell_owner(
-                context,
-                f"🔒 New person wants access: {handle}\n"
-                f"telegram_id: {tg_user.id}\n"
-                f"seen in: {where}\n\n"
-                f"Approve with:  /approve {tg_user.id}",
-                ("user", tg_user.id),
-            )
-            if _is_use_attempt(update.effective_message, context.bot):
-                await _say(update, PENDING_USER_MESSAGE, ("user", tg_user.id))
-        else:
-            logger.debug("Ignoring revoked person %s", tg_user.id)
-        raise ApplicationHandlerStop
-
 
 # ---------------------------------------------------------------------------
 # Owner commands
@@ -316,16 +283,14 @@ def _code(text: str) -> str:
     return "`" + str(text).replace("\\", "").replace("`", "") + "`"
 
 
-async def _resolve_access_target(token: str):
-    """Work out whether a token names a group or a person.
+async def _resolve_group(token: str):
+    """Find the group a token names, by id or by title.
 
-    Telegram group ids are negative and user ids positive, which makes the common
-    case unambiguous. Bare text tries a person first, then a group title, so the
-    names shown by /access can be typed straight back.
-
-    Returns (kind, value) where kind is "group", "user", "ambiguous" or None.
+    Returns (kind, value) where kind is "group", "ambiguous" or None. There is no
+    per-person branch any more: access is granted to groups, so /approve @someone
+    would promise something the gate does not check.
     """
-    groups, _ = await db.get_access_overview()
+    groups = await db.get_access_overview()
     cleaned = token.strip()
 
     if cleaned.startswith("-") and cleaned.lstrip("-").isdigit():
@@ -334,14 +299,6 @@ async def _resolve_access_target(token: str):
             if g["chat_id"] == chat_id:
                 return "group", g
         return None, None
-
-    if cleaned.startswith("@") or cleaned.isdigit():
-        user = await db.get_user_by_handle_or_id(cleaned)
-        return ("user", user) if user else (None, None)
-
-    user = await db.get_user_by_handle_or_id(cleaned)
-    if user:
-        return "user", user
 
     matches = [g for g in groups if cleaned.lower() in (g["title"] or "").lower()]
     if len(matches) == 1:
@@ -370,21 +327,39 @@ async def _set_access(update: Update, context: ContextTypes.DEFAULT_TYPE, approv
                 f"Usage:\n"
                 f"  /{cmd} — inside a group, {cmd} that group\n"
                 f"  /{cmd} <group id>  e.g. /{cmd} -1001234567890\n"
-                f"  /{cmd} <group name>  e.g. /{cmd} Jazz IPPT\n"
-                f"  /{cmd} <@handle or telegram_id> — for a person\n\n"
-                f"/access lists everything with the exact command for each."
+                f"  /{cmd} <group name>  e.g. /{cmd} Jazz IPPT\n\n"
+                f"Access is per group: approve a group and everyone in it can use "
+                f"me there. There is nothing to approve per person.\n\n"
+                f"/access lists every group with the exact command for each."
             )
             return
         ok = await db.set_group_approved(chat.id, approved)
+        extra = (
+            "\nEveryone in this group can use me here now."
+            if approved and ok else ""
+        )
         await message.reply_text(
-            f"✅ {verb} this group ({chat.title})." if ok
+            f"✅ {verb} this group ({chat.title}).{extra}" if ok
             else "⚠️ Could not find this group in the database."
         )
         return
 
     # Everything after the command counts, so group names with spaces work.
     token = " ".join(args).strip()
-    kind, value = await _resolve_access_target(token)
+
+    # A handle or a bare number is someone trying to approve a person. Say plainly
+    # that access does not work that way rather than reporting "not found".
+    if token.startswith("@") or token.isdigit():
+        await message.reply_text(
+            f"Access is granted per group, not per person — there is nothing to "
+            f"{cmd} for {token}.\n\n"
+            f"{'Approve' if approved else 'Revoke'} the group they are in and "
+            f"everyone inside it is covered. /access lists them.\n\n"
+            f"(To make someone a bot owner, that is /addowner.)"
+        )
+        return
+
+    kind, value = await _resolve_group(token)
 
     if kind == "ambiguous":
         names = "\n".join(f"  {g['title']}  ({g['chat_id']})" for g in value[:10])
@@ -399,20 +374,8 @@ async def _set_access(update: Update, context: ContextTypes.DEFAULT_TYPE, approv
         )
         return
 
-    if kind == "user":
-        ok = await db.set_user_approved(value["telegram_id"], approved)
-        handle = f"@{value['username']}" if value.get("username") else value["name"]
-        await message.reply_text(
-            f"✅ {verb} {handle} (telegram_id {value['telegram_id']})." if ok
-            else f"⚠️ Could not update {handle}."
-        )
-        return
-
     await message.reply_text(
-        f"Nothing matching '{token}'.\n"
-        f"For a person, they must have messaged the bot at least once — "
-        f"or use their numeric telegram_id.\n"
-        f"For a group, use the id or name shown by /access."
+        f"No group matching '{token}'. Use the id or name shown by /access."
     )
 
 
@@ -454,7 +417,7 @@ async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await message.reply_text("Access control is disabled — no owner id configured.")
         return
 
-    groups, pending = await db.get_access_overview()
+    groups = await db.get_access_overview()
     allowed = [g for g in groups if g["approved"]]
     blocked = [g for g in groups if not g["approved"]]
 
@@ -490,15 +453,10 @@ async def cmd_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             lines.append("  " + _code(f"/approve {g['chat_id']}"))
         lines.append("")
 
-    if pending:
-        lines.append("⏳ *People waiting*")
-        for u in pending:
-            handle = f"@{u['username']}" if u.get("username") else u["name"]
-            lines.append(formatter.escape(handle))
-            lines.append("  " + _code(f"/approve {u['telegram_id']}"))
-        lines.append("")
-
-    lines.append(formatter.escape("Tap a command to copy it. /revoke also takes a group name."))
+    lines.append(formatter.escape(
+        "Tap a command to copy it. Access is per group — approving one covers "
+        "everyone in it."
+    ))
     await _send_chunked(message, [ln for ln in lines])
 
 
