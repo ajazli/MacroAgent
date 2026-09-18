@@ -10,7 +10,8 @@ Corrections:
   Reply to the bot's meal analysis message in plain language and the saved log is
   recalculated in place — add an item ("add one fried chicken wing"), remove one
   ("no rice"), change a quantity ("there were 2 wings"), fix the dish ("it's satay
-  not rendang"), or set values outright ("350 calories, 28g protein").
+  not rendang"), set values outright ("350 calories, 28g protein"), or bin the
+  entry entirely ("delete this meal").
   The bot identifies its own analysis messages via a DB mapping rather than text
   matching. Anyone in the chat may correct any meal analysed there — the chat is
   the boundary, not the owner — and a cross-edit says whose log it changed.
@@ -253,6 +254,66 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _run_meal_analysis(photo_message, message, user, tg_user, context, silent=False)
 
 
+# Unambiguous ways of saying "bin this entry". Matching these locally means the
+# commonest phrasing costs no model call at all; anything else still goes to
+# parse_correction, which can also return action="delete".
+_DELETE_PHRASES = {
+    "remove", "remove this", "remove it", "remove meal", "remove this meal",
+    "remove this one", "delete", "delete this", "delete it", "delete meal",
+    "delete this meal", "delete this one", "scrap this", "scrap it",
+    "bin this", "bin it", "undo this", "undo", "cancel this", "discard this",
+    "get rid of this", "take this out", "this is a duplicate", "duplicate",
+}
+
+
+def _is_delete_request(text: str) -> bool:
+    cleaned = text.strip().strip(".!?,").lower()
+    return cleaned in _DELETE_PHRASES
+
+
+async def _delete_meal(update, context, log_row, editor, processing) -> bool:
+    """Remove a meal entry and tidy up the messages that referred to it."""
+    message = update.effective_message
+    data = _log_data(log_row)
+    desc = data.get("description", "that meal")
+    kcal = int(data.get("calories", 0) or 0)
+    owner_id = log_row["user_id"]
+
+    if not await db.delete_log(log_row["id"]):
+        await processing.edit_text(
+            formatter.escape("⚠️ Could not remove that meal. Please try again."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return True
+
+    # Strike through the original analysis so the chat does not keep showing
+    # numbers that are no longer in anyone's day.
+    try:
+        await message.reply_to_message.edit_text(
+            formatter.escape(f"🗑️ Removed — {desc} ({kcal} kcal)"),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+    except Exception:
+        logger.debug("Could not edit the original analysis after delete", exc_info=True)
+
+    who = ""
+    if editor["id"] != owner_id:
+        owner_handle = (log_row.get("owner_username") or "").strip()
+        owner = f"@{owner_handle}" if owner_handle else (log_row.get("owner_name") or "someone else")
+        editor_handle = (editor.get("username") or "").strip()
+        editor_name = f"@{editor_handle}" if editor_handle else editor["name"]
+        who = f"\n_{formatter.escape(owner)}'s meal, removed by {formatter.escape(editor_name)}_"
+
+    # Recompute after the delete so the day's total reflects it.
+    status = await _calorie_status(owner_id, 0)
+    await processing.edit_text(
+        f"🗑️ *Removed* — {formatter.escape(desc)} "
+        f"\\({formatter.escape(str(kcal))} kcal\\){who}{status}",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    return True
+
+
 async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Apply a plain-language correction to a meal the bot already analysed.
 
@@ -290,6 +351,12 @@ async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_T
 
     original_data = _log_data(log_row)
 
+    # "delete this" is unmistakable, so handle it without spending a model call.
+    if _is_delete_request(correction_text):
+        processing = await message.reply_text(
+            formatter.escape("🗑️ Removing…"), parse_mode=ParseMode.MARKDOWN_V2)
+        return await _delete_meal(update, context, log_row, editor, processing)
+
     processing = await message.reply_text(
         formatter.escape("✏️ Recalculating…"),
         parse_mode=ParseMode.MARKDOWN_V2,
@@ -302,14 +369,20 @@ async def handle_meal_correction(update: Update, context: ContextTypes.DEFAULT_T
                 "⚠️ Could not apply that correction. Try:\n"
                 "• Add or remove an item: \"add one fried chicken wing\"\n"
                 "• Fix the dish: \"it's satay, not rendang\"\n"
-                "• Set values: \"calories 350, protein 28g\""
+                "• Set values: \"calories 350, protein 28g\"\n"
+                "• Bin the whole entry: \"delete this meal\""
             ),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return True
 
     change_summary = str(corrected_raw.get("change_summary", "")).strip()
-    if change_summary == "NO_CHANGE":
+    action = str(corrected_raw.get("action", "update")).strip().lower()
+
+    if action == "delete":
+        return await _delete_meal(update, context, log_row, editor, processing)
+
+    if action == "none" or change_summary == "NO_CHANGE":
         # Not actually a correction — probably a question or a comment about the meal.
         # Drop the placeholder and let the conversational handler take the message.
         try:

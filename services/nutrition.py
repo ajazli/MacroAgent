@@ -55,10 +55,19 @@ _NUTRITION_SCHEMA = {
                 "e.g. 'Added 1 fried chicken wing (+180 kcal)'."
             ),
         },
+        "action": {
+            "type": "string",
+            "enum": ["update", "delete", "none"],
+            "description": (
+                "update: adjust this meal's values. "
+                "delete: remove the whole entry from the log. "
+                "none: not a correction at all — a question or a comment."
+            ),
+        },
     },
     "required": [
         "description", "calories", "protein_g", "carbs_g",
-        "fat_g", "fiber_g", "confidence", "notes", "change_summary",
+        "fat_g", "fiber_g", "confidence", "notes", "change_summary", "action",
     ],
     "additionalProperties": False,
 }
@@ -157,7 +166,18 @@ CORRECTION_PROMPT = (
     "OVERRIDE A VALUE — 'calories should be 350', 'protein is 28g'.\n"
     "  Set exactly the fields the user named and leave every other field untouched.\n\n"
 
+    "DELETE THE WHOLE ENTRY — 'remove this', 'delete this meal', 'scrap it', "
+    "'this was logged twice', 'I never ate this', 'wrong photo'.\n"
+    "  The user wants the entry gone from the log entirely, not adjusted. Set action "
+    "  to 'delete'. The nutrition fields are ignored in that case, so echo the "
+    "  originals back, and make change_summary name what is being removed.\n\n"
+
     "Rules:\n"
+    "• Set action to 'update' for every edit above, 'delete' only when the whole "
+    "  entry should go, and 'none' when the message is not a correction at all.\n"
+    "• Removing ONE ITEM from a meal is an update, not a delete. 'no rice' trims the "
+    "  meal; 'remove this' throws the meal away. When the message names a specific "
+    "  food, prefer update.\n"
     "• Totals must always describe the WHOLE meal, never just the change.\n"
     "• Keep the description short and food-first — dish plus main components, not a paragraph.\n"
     "• Set confidence to reflect the corrected estimate: 'high' when the user gave exact numbers, "

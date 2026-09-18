@@ -960,6 +960,23 @@ async def get_access_overview() -> list[dict]:
         return []
 
 
+async def delete_log(log_id: int) -> bool:
+    """Remove a log entry entirely.
+
+    log_messages references logs with ON DELETE CASCADE, so every bot message
+    mapped to this entry stops resolving at the same time — replying to a stale
+    analysis afterwards simply finds nothing rather than editing a ghost.
+    """
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            result = await conn.execute("DELETE FROM logs WHERE id = $1", log_id)
+            return result.endswith(" 1")
+    except Exception:
+        logger.exception("delete_log failed for log_id=%s", log_id)
+        return False
+
+
 async def get_all_users_meals_today() -> list[dict]:
     """Return today's meal logs joined with user info and the chat_id they were logged in.
 
